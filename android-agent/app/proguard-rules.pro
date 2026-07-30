@@ -1,0 +1,1 @@
+-keep class dev.lucasdone.tvremote.agent.model.** { *; }

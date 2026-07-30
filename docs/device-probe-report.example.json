@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "device": {
+    "manufacturer": "<vendor>",
+    "model": "<model>",
+    "firmware": "<firmware>",
+    "apiLevel": 19,
+    "abis": ["armeabi-v7a"]
+  },
+  "capabilities": {
+    "apkRemote": "UNVERIFIED",
+    "adb": "UNVERIFIED",
+    "scrcpy": "UNSUPPORTED",
+    "minicap": "UNVERIFIED",
+    "mediaProjection": "UNSUPPORTED",
+    "accessibility": "UNVERIFIED",
+    "playbackAudio": "UNSUPPORTED"
+  },
+  "selectedBackends": {
+    "control": "NONE",
+    "video": "NONE",
+    "audio": "NONE"
+  },
+  "performance": {
+    "latencyMedianMs": null,
+    "latencyP95Ms": null,
+    "framesPerSecond": null,
+    "memoryMegabytes": null,
+    "temperatureCelsius": null,
+    "stableMinutes": null
+  },
+  "limitations": []
+}

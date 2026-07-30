@@ -1,0 +1,13 @@
+.temp/
+.zig-cache/
+zig-out/
+.gradle/
+**/build/
+local.properties
+*.log
+*.jks
+*.keystore
+*.apk
+*.aab
+windows-controller/vendor/
+windows-controller/tools/
