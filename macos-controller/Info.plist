@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleExecutable</key><string>tv-remote-control</string>
+    <key>CFBundleIdentifier</key><string>dev.lucasdone.tv-remote-control</string>
+    <key>CFBundleName</key><string>TV Remote Control</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>__TVRC_VERSION__</string>
+    <key>CFBundleVersion</key><string>__TVRC_VERSION__</string>
+    <!-- 版本占位符 __TVRC_VERSION__ 由 scripts/package-local.sh 在打包时用 VERSION 文件内容 sed 替换；
+         直接双击 .app 会看到占位符，属预期行为，正式分发必须走打包脚本。
+         音频链路（AACAudioEngine）仅用 AVAudioPlayerNode 播放，不接入 inputNode，
+         无录音路径，因此不需要 NSMicrophoneUsageDescription。 -->
+    <key>LSMinimumSystemVersion</key><string>13.0</string>
+    <key>NSLocalNetworkUsageDescription</key><string>Discover and control your Android TV on the local network.</string>
+    <key>NSHighResolutionCapable</key><true/>
+</dict></plist>

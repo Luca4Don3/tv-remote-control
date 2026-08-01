@@ -1,4 +1,5 @@
 .temp/
+.artifacts/
 .zig-cache/
 zig-out/
 .gradle/
@@ -11,3 +12,4 @@ local.properties
 *.aab
 windows-controller/vendor/
 windows-controller/tools/
+windows-controller/zig-pkg/

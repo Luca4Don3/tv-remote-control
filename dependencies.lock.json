@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "dependencies": {
+    "gradle": {
+      "version": "9.6.1",
+      "distributionUrl": "https://services.gradle.org/distributions/gradle-9.6.1-bin.zip",
+      "distributionSha256": "9c0f7faeeb306cb14e4279a3e084ca6b596894089a0638e68a07c945a32c9e14",
+      "wrapperJarSha256": "497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7",
+      "license": "Apache-2.0"
+    },
+    "mbedtls": {
+      "version": "3.6.7",
+      "sourceCommit": "627361b09e6f6e3eac756297a370a591cf310ab9",
+      "url": "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/mbedtls-3.6.7.tar.gz",
+      "size": 5678976,
+      "sha256": "807f0a1cc7c63b571180e9efeb6236b677e550869eb0442ace33aa9c69055fcc",
+      "license": "Apache-2.0 OR GPL-2.0-or-later"
+    },
+    "scrcpyServer": {
+      "version": "4.1",
+      "sourceCommit": "49c9501fb26f456bbf4a341dd68879f670c67452",
+      "url": "https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-server-v4.1",
+      "size": 733706,
+      "sha256": "deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae",
+      "license": "Apache-2.0",
+      "licenseUrl": "https://raw.githubusercontent.com/Genymobile/scrcpy/v4.1/LICENSE",
+      "licenseSize": 11387,
+      "licenseSha256": "01c12035bf35af37241298dc7ad538eb2a07e5c940437bc6876feeaa9d1951d0"
+    },
+    "androidPlatformToolsWindows": {
+      "version": "37.0.1",
+      "repositoryMetadataUrl": "https://dl.google.com/android/repository/repository2-1.xml",
+      "url": "https://dl.google.com/android/repository/platform-tools_r37.0.1-win.zip",
+      "size": 8044989,
+      "repositoryChecksumAlgorithm": "sha1",
+      "repositoryChecksum": "e03e78b1d80b396f1c3358e31251cb31740e1110",
+      "sha256": "45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99",
+      "license": "Android SDK License"
+    },
+    "minicap": {
+      "state": "disabled_no_verified_device_profile",
+      "artifacts": []
+    }
+  },
+  "downloadPolicy": {
+    "allowedHosts": ["github.com", "dl.google.com", "services.gradle.org"],
+    "cacheDirectory": ".temp/dependencies",
+    "allowPreview": false
+  }
+}
