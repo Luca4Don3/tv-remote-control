@@ -1,19 +1,39 @@
 pub const adb = @import("adb.zig");
+pub const abi = @import("abi.zig");
 pub const backend = @import("backend.zig");
+pub const credential_store = @import("credential_store.zig");
+pub const control_protocol = @import("control_protocol.zig");
+pub const control_client = @import("control_client.zig");
 pub const device_discovery = @import("device_discovery.zig");
 pub const install = @import("install.zig");
+pub const lan_discovery = @import("lan_discovery.zig");
 pub const media = @import("media.zig");
+pub const media_transport = @import("media_transport.zig");
 pub const probe = @import("probe.zig");
 pub const protocol = @import("protocol.zig");
+pub const security_protocol = @import("security_protocol.zig");
+pub const platform = @import("platform.zig");
 pub const ui_state = @import("ui_state.zig");
+pub const transport_protocol = @import("transport_protocol.zig");
+pub const tls_transport = @import("tls_transport.zig");
 
 test {
     _ = adb;
+    _ = abi;
     _ = backend;
+    _ = credential_store;
+    _ = control_protocol;
+    _ = control_client;
     _ = device_discovery;
     _ = install;
+    _ = lan_discovery;
     _ = media;
+    _ = media_transport;
     _ = probe;
     _ = protocol;
+    _ = security_protocol;
+    _ = platform;
     _ = ui_state;
+    _ = transport_protocol;
+    _ = tls_transport;
 }

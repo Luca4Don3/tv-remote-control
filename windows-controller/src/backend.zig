@@ -1,10 +1,7 @@
 const std = @import("std");
 
-pub const DeviceAvailability = enum {
-    controllable,
-    unreachable_device,
-    unverified,
-};
+pub const Reachability = enum { reachable, not_reachable };
+pub const ModelVerification = enum { verified, unverified };
 
 pub const ControlBackend = enum {
     apk,
@@ -41,7 +38,8 @@ pub const Probe = struct {
 };
 
 pub const Selection = struct {
-    availability: DeviceAvailability,
+    reachability: Reachability,
+    model_verification: ModelVerification,
     default_control: ControlBackend,
     enhanced_control: ControlBackend,
     video: VideoBackend,
@@ -52,19 +50,14 @@ pub const Selection = struct {
 pub fn select(probe: Probe) Selection {
     const default_control: ControlBackend = if (probe.apk_reachable and probe.apk_supports_action)
         .apk
-    else if (probe.adb_authorized and probe.scrcpy_control_available)
-        .scrcpy_control
-    else if (probe.adb_authorized)
-        .restricted_adb_input
     else
         .none;
 
-    const enhanced_control: ControlBackend = if (probe.adb_authorized and probe.scrcpy_control_available)
-        .scrcpy_control
-    else if (probe.adb_authorized)
-        .restricted_adb_input
-    else
-        .none;
+    // 设计决策（非未实现项）：enhanced_control 恒为 none。
+    // 原因：scrcpy 固定以 control=false 启动，ADB 仅作为用户显式启用的
+    // 媒体增强（scrcpy 画面/音频），从不替代 APK 按键控制；
+    // restricted_adb_input 与 scrcpy_control 枚举值保留用于未来授权场景。
+    const enhanced_control: ControlBackend = .none;
 
     const video_choice = selectVideo(probe);
     const audio = if (probe.adb_authorized and probe.scrcpy_audio_available)
@@ -75,12 +68,8 @@ pub fn select(probe: Probe) Selection {
         AudioBackend.none;
 
     return .{
-        .availability = if (!probe.verified_profile)
-            DeviceAvailability.unverified
-        else if (default_control != .none or probe.apk_reachable)
-            DeviceAvailability.controllable
-        else
-            DeviceAvailability.unreachable_device,
+        .reachability = if (default_control != .none or probe.apk_reachable) .reachable else .not_reachable,
+        .model_verification = if (probe.verified_profile) .verified else .unverified,
         .default_control = default_control,
         .enhanced_control = enhanced_control,
         .video = video_choice.backend,
@@ -125,9 +114,28 @@ test "keeps APK control independent from missing video" {
         .scrcpy_audio_available = false,
         .minicap_verified = false,
     });
-    try std.testing.expectEqual(DeviceAvailability.controllable, result.availability);
+    try std.testing.expectEqual(Reachability.reachable, result.reachability);
+    try std.testing.expectEqual(ModelVerification.verified, result.model_verification);
     try std.testing.expectEqual(ControlBackend.apk, result.default_control);
     try std.testing.expectEqual(VideoBackend.none, result.video);
+}
+
+test "reachability is independent from model verification" {
+    const result = select(.{
+        .api_level = 34,
+        .verified_profile = false,
+        .apk_reachable = true,
+        .apk_supports_action = true,
+        .media_projection_available = false,
+        .playback_capture_available = false,
+        .adb_authorized = false,
+        .scrcpy_video_available = false,
+        .scrcpy_control_available = false,
+        .scrcpy_audio_available = false,
+        .minicap_verified = false,
+    });
+    try std.testing.expectEqual(Reachability.reachable, result.reachability);
+    try std.testing.expectEqual(ModelVerification.unverified, result.model_verification);
 }
 
 test "prefers scrcpy video without replacing working APK control" {
@@ -145,7 +153,7 @@ test "prefers scrcpy video without replacing working APK control" {
         .minicap_verified = false,
     });
     try std.testing.expectEqual(ControlBackend.apk, result.default_control);
-    try std.testing.expectEqual(ControlBackend.scrcpy_control, result.enhanced_control);
+    try std.testing.expectEqual(ControlBackend.none, result.enhanced_control);
     try std.testing.expectEqual(VideoBackend.scrcpy, result.video);
     try std.testing.expectEqual(AudioBackend.scrcpy, result.audio);
 }
@@ -183,5 +191,5 @@ test "uses minicap only on a verified legacy ADB device" {
         .minicap_verified = true,
     });
     try std.testing.expectEqual(VideoBackend.minicap, result.video);
-    try std.testing.expectEqual(ControlBackend.restricted_adb_input, result.default_control);
+    try std.testing.expectEqual(ControlBackend.none, result.default_control);
 }

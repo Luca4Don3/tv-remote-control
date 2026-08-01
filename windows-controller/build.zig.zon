@@ -1,8 +1,8 @@
 .{
     .name = .tv_remote_control,
-    .version = "0.1.0",
+    .version = "0.1.2",
     .fingerprint = 0xf05e07b864f3d487,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
-    .paths = .{ "build.zig", "build.zig.zon", "src", "scripts" },
+    .paths = .{ "build.zig", "build.zig.zon", "include", "resources", "src", "scripts" },
 }
