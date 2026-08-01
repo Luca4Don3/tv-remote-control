@@ -13,3 +13,4 @@ local.properties
 windows-controller/vendor/
 windows-controller/tools/
 windows-controller/zig-pkg/
+/AGENTS.md
