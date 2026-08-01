@@ -12,25 +12,41 @@ class KeyStateTracker {
 
     @Synchronized
     fun accept(command: KeyEventCommand): CommandAck {
+        val validation = validate(command)
+        if (validation.status == AckStatus.SUCCESS) commit(command)
+        return validation
+    }
+
+    @Synchronized
+    fun validate(command: KeyEventCommand): CommandAck {
         if (command.sequence <= lastSequence) {
             return CommandAck(command.sequence, AckStatus.REJECTED, "sequence is not increasing")
         }
         if (command.repeatCount < 0) {
             return CommandAck(command.sequence, AckStatus.REJECTED, "repeatCount must be non-negative")
         }
-        lastSequence = command.sequence
-
         val valid = when (command.state) {
             KeyState.PRESS -> command.key !in pressed
-            KeyState.DOWN -> pressed.add(command.key)
+            KeyState.DOWN -> command.key !in pressed
             KeyState.REPEAT -> command.key in pressed
-            KeyState.UP -> pressed.remove(command.key)
+            KeyState.UP -> command.key in pressed
         }
         if (!valid) {
             return CommandAck(command.sequence, AckStatus.REJECTED, "invalid key state transition")
         }
+        // 仅在全部校验通过后推进序列号，避免被拒命令造成重放拒绝（DoS）。
+        lastSequence = command.sequence
 
         return CommandAck(command.sequence, AckStatus.SUCCESS)
+    }
+
+    @Synchronized
+    fun commit(command: KeyEventCommand) {
+        when (command.state) {
+            KeyState.DOWN -> pressed.add(command.key)
+            KeyState.UP -> pressed.remove(command.key)
+            KeyState.REPEAT, KeyState.PRESS -> Unit
+        }
     }
 
     @Synchronized
@@ -39,4 +55,5 @@ class KeyStateTracker {
         pressed.clear()
         return released
     }
+
 }

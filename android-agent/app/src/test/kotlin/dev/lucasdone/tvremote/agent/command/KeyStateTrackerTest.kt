@@ -22,8 +22,11 @@ class KeyStateTrackerTest {
     fun rejectsReplayAndReleaseWithoutPress() {
         val tracker = KeyStateTracker()
         assertEquals(AckStatus.REJECTED, tracker.accept(command(1, KeyState.UP)).status)
+        // 被拒命令不推进序列号，相同序列可重试。
+        assertEquals(AckStatus.SUCCESS, tracker.accept(command(1, KeyState.DOWN)).status)
+        // 成功命令推进序列号，重放被拒。
         assertEquals(AckStatus.REJECTED, tracker.accept(command(1, KeyState.DOWN)).status)
-        assertEquals(AckStatus.SUCCESS, tracker.accept(command(2, KeyState.DOWN)).status)
+        assertEquals(AckStatus.SUCCESS, tracker.accept(command(2, KeyState.UP)).status)
     }
 
     @Test

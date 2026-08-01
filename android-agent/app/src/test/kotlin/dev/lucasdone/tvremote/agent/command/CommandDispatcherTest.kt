@@ -18,10 +18,24 @@ class CommandDispatcherTest {
         assertEquals(listOf(LogicalKey.BACK), executor.executed)
     }
 
-    private fun command(sequence: Long, key: LogicalKey) = KeyEventCommand(
+    @Test
+    fun failedExecutionDoesNotLeaveKeyPressed() {
+        val failing = object : CommandExecutor {
+            override fun supports(key: LogicalKey) = key == LogicalKey.BACK
+            override fun execute(command: KeyEventCommand) = AckStatus.EXECUTION_FAILED
+        }
+        val recording = RecordingExecutor()
+        val tracker = KeyStateTracker()
+        val dispatcher = CommandDispatcher(tracker, listOf(failing, recording))
+
+        assertEquals(AckStatus.EXECUTION_FAILED, dispatcher.dispatch(command(1, LogicalKey.BACK, KeyState.DOWN)).status)
+        assertEquals(emptySet<LogicalKey>(), tracker.releaseAll())
+    }
+
+    private fun command(sequence: Long, key: LogicalKey, state: KeyState = KeyState.PRESS) = KeyEventCommand(
         sequence = sequence,
         key = key,
-        state = KeyState.PRESS,
+        state = state,
     )
 
     private class RecordingExecutor : CommandExecutor {

@@ -12,6 +12,7 @@ import dev.lucasdone.tvremote.agent.model.LogicalKey
 class MediaCommandExecutor(context: Context) : CommandExecutor {
     private val audioManager = context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var legacyMuted = false
+    private val downTimes = mutableMapOf<LogicalKey, Long>()
 
     override fun supports(key: LogicalKey): Boolean = key in supportedKeys
 
@@ -24,7 +25,9 @@ class MediaCommandExecutor(context: Context) : CommandExecutor {
 
     override fun release(key: LogicalKey): AckStatus {
         val keyCode = mediaKeyCode(key) ?: return AckStatus.SUCCESS
-        audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+        val eventTime = SystemClock.uptimeMillis()
+        val downTime = downTimes.remove(key) ?: eventTime
+        audioManager.dispatchMediaKeyEvent(KeyEvent(downTime, eventTime, KeyEvent.ACTION_UP, keyCode, 0))
         return AckStatus.SUCCESS
     }
 
@@ -35,7 +38,7 @@ class MediaCommandExecutor(context: Context) : CommandExecutor {
     }
 
     private fun toggleMute(state: KeyState): AckStatus {
-        if (state == KeyState.UP) return AckStatus.SUCCESS
+        if (state != KeyState.DOWN && state != KeyState.PRESS) return AckStatus.SUCCESS
         if (android.os.Build.VERSION.SDK_INT >= 23) {
             audioManager.adjustVolume(AudioManager.ADJUST_TOGGLE_MUTE, AudioManager.FLAG_SHOW_UI)
         } else {
@@ -54,12 +57,18 @@ class MediaCommandExecutor(context: Context) : CommandExecutor {
                 audioManager.dispatchMediaKeyEvent(KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, keyCode, 0))
                 audioManager.dispatchMediaKeyEvent(KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, keyCode, 0))
             }
-            KeyState.DOWN, KeyState.REPEAT -> audioManager.dispatchMediaKeyEvent(
-                KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, keyCode, command.repeatCount),
-            )
-            KeyState.UP -> audioManager.dispatchMediaKeyEvent(
-                KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, keyCode, command.repeatCount),
-            )
+            KeyState.DOWN -> {
+                downTimes[command.key] = eventTime
+                audioManager.dispatchMediaKeyEvent(KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, keyCode, 0))
+            }
+            KeyState.REPEAT -> {
+                val downTime = downTimes[command.key] ?: return AckStatus.EXECUTION_FAILED
+                audioManager.dispatchMediaKeyEvent(KeyEvent(downTime, eventTime, KeyEvent.ACTION_DOWN, keyCode, command.repeatCount))
+            }
+            KeyState.UP -> {
+                val downTime = downTimes.remove(command.key) ?: return AckStatus.EXECUTION_FAILED
+                audioManager.dispatchMediaKeyEvent(KeyEvent(downTime, eventTime, KeyEvent.ACTION_UP, keyCode, command.repeatCount))
+            }
         }
         return AckStatus.SUCCESS
     }

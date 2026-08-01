@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">TV Remote Agent</string>
     <string name="accessibility_description">允许已认证的控制端执行返回、主页等受支持的电视操作。</string>
+    <string name="revoke_controller">撤销 %1$s</string>
 </resources>
