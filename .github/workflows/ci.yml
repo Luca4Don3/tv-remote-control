@@ -99,6 +99,7 @@ jobs:
         run: |
           (cd windows-controller && zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos.13.0 --prefix "${RUNNER_TEMP}/mac-core")
           swiftc -swift-version 6 -parse-as-library -target arm64-apple-macos13.0 \
+            -sdk "$(xcrun --show-sdk-path)" \
             macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift \
             macos-controller/Sources/*.swift \
             -L "${RUNNER_TEMP}/mac-core/lib" -ltv_remote_core \
