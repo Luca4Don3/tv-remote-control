@@ -49,7 +49,11 @@ class ProjectionCapture(
     private var inputSurface: Surface? = null
     private var display: VirtualDisplay? = null
     private var legacyDrainThread: Thread? = null
-    private val retiredLegacyEncoders = mutableListOf<RetiredLegacyEncoder>()
+    private val legacyEncoderReaper = LegacyEncoderReaper<MediaCodec>(
+        WORKER_JOIN_TIMEOUT_MS,
+        FORCED_RELEASE_TIMEOUT_MS,
+        ::elapsedRealtimeMs,
+    )
     private var currentQuality = initialQuality
     private val packetState = ProjectionPacketState()
     private var thermalListenerRegistered = false
@@ -164,7 +168,7 @@ class ProjectionCapture(
         } catch (_: RuntimeException) {
             if (isCurrentGeneration(encoderGeneration)) failCurrentEncoder("video_encoder_failed")
         } finally {
-            synchronized(this) { reapRetiredLegacyEncoders() }
+            legacyEncoderReaper.reap()
         }
     }
 
@@ -274,44 +278,34 @@ class ProjectionCapture(
     private fun releaseEncoder(): Boolean {
         packetState.invalidateEncoder()
         // 先给已退休条目一次 join 机会，配合超时强制释放保证 codec 最终被 release。
-        reapRetiredLegacyEncoders(wait = true)
+        legacyEncoderReaper.reap(wait = true)
         runCatching { display?.release() }
         display = null
         runCatching { inputSurface?.release() }
         inputSurface = null
         val drain = legacyDrainThread
-        drain?.interrupt()
         val encoder = codec
-        runCatching { encoder?.stop() }
-        if (drain !== Thread.currentThread()) runCatching { drain?.join(WORKER_JOIN_TIMEOUT_MS) }
-        val drainExited = drain == null || drain === Thread.currentThread() || !drain.isAlive
-        if (drainExited) {
-            runCatching { encoder?.release() }
-            legacyDrainThread = null
-        } else if (encoder != null && retiredLegacyEncoders.none { it.codec === encoder }) {
-            retiredLegacyEncoders += RetiredLegacyEncoder(encoder, drain, elapsedRealtimeMs())
-            legacyDrainThread = null
+        val drainExited = when {
+            encoder == null -> {
+                drain?.interrupt()
+                if (drain !== Thread.currentThread()) runCatching { drain?.join(WORKER_JOIN_TIMEOUT_MS) }
+                drain == null || drain === Thread.currentThread() || !drain.isAlive
+            }
+            drain == null -> {
+                runCatching { encoder.stop() }
+                runCatching { encoder.release() }
+                true
+            }
+            else -> legacyEncoderReaper.retire(
+                encoder,
+                drain,
+                stop = { it.stop() },
+                release = { it.release() },
+            )
         }
+        legacyDrainThread = null
         codec = null
         return drainExited
-    }
-
-    private fun reapRetiredLegacyEncoders(wait: Boolean = false) {
-        val now = elapsedRealtimeMs()
-        val iterator = retiredLegacyEncoders.iterator()
-        while (iterator.hasNext()) {
-            val retired = iterator.next()
-            retired.drain.interrupt()
-            if (wait && retired.drain !== Thread.currentThread()) {
-                runCatching { retired.drain.join(WORKER_JOIN_TIMEOUT_MS) }
-            }
-            // drain 线程异常退出或停留超过强制释放时限时，直接释放 codec。
-            val forciblyReleasable = now - retired.retiredAtMs >= FORCED_RELEASE_TIMEOUT_MS
-            if (!retired.drain.isAlive || retired.drain === Thread.currentThread() || forciblyReleasable) {
-                // drain 仍占用时 release 可能抛异常；失败则保留条目等待下次重试。
-                if (runCatching { retired.codec.release() }.isSuccess) iterator.remove()
-            }
-        }
     }
 
     private fun failCurrentEncoder(reason: String) {
@@ -339,7 +333,7 @@ class ProjectionCapture(
         synchronized(this) {
             unregisterThermalListener()
             releaseEncoder()
-            reapRetiredLegacyEncoders(wait = true)
+            legacyEncoderReaper.reap(wait = true)
             runCatching { projection.unregisterCallback(projectionCallback) }
             if (stopProjection) runCatching { projection.stop() }
             worker.quitSafely()
@@ -376,6 +370,4 @@ class ProjectionCapture(
 
         private fun elapsedRealtimeMs(): Long = System.nanoTime() / 1_000_000L
     }
-
-    private data class RetiredLegacyEncoder(val codec: MediaCodec, val drain: Thread, val retiredAtMs: Long)
 }

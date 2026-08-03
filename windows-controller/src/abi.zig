@@ -127,20 +127,42 @@ const FoundAdb = struct {
     version: adb_manager.Version,
 };
 
-/// Resources below are created, transitioned and destroyed only by the ADB
-/// worker. Other threads may read a snapshot while holding `Handle.mutex`.
+fn OwnedSlot(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        value: ?T = null,
+
+        fn isEmpty(self: *const Self) bool {
+            return self.value == null;
+        }
+
+        fn borrow(self: *const Self) ?T {
+            return self.value;
+        }
+
+        fn publish(self: *Self, value: T) bool {
+            if (self.value != null) return false;
+            self.value = value;
+            return true;
+        }
+
+        fn take(self: *Self) ?T {
+            const owned = self.value;
+            self.value = null;
+            return owned;
+        }
+    };
+}
+
+/// The ADB worker publishes these resources. Any thread may take teardown
+/// ownership while holding `Handle.adb_media_mutex`; fields remain protected by
+/// `Handle.mutex`.
 const AdbRuntime = struct {
     server: ?process_supervisor.ManagedProcess = null,
-    session: ?*scrcpy_manager.Session = null,
+    session: OwnedSlot(*scrcpy_manager.Session) = .{},
     video_worker: ?std.Thread = null,
     audio_worker: ?std.Thread = null,
-    /// spawn 返回与写入 video_worker 字段之间存在“启动中”窗口：stopAdbMedia
-    /// 在 worker 为 null 但 *_starting 为 true 时等待线程退出（*_exited），
-    /// 线程句柄随后由 spawn 方在赋值点回收。
-    video_starting: bool = false,
-    video_exited: bool = false,
-    audio_starting: bool = false,
-    audio_exited: bool = false,
     media_stop_requested: bool = false,
     video_failed: bool = false,
     audio_failed: bool = false,
@@ -151,6 +173,10 @@ const ManagedInstallState = enum { install_required, upgrade_required, ready };
 fn managedInstallState(directory_exists: bool, adb_exists: bool, marker_matches: bool) ManagedInstallState {
     if (!directory_exists) return .install_required;
     return if (adb_exists and marker_matches) .ready else .upgrade_required;
+}
+
+fn canPublishAdbSession(state: platform.ConnectionState, lifecycle: MediaLifecycle, slot_empty: bool, cancelled: bool) bool {
+    return state == .connected and lifecycle == .adb_starting and slot_empty and !cancelled;
 }
 
 const Request = struct {
@@ -184,10 +210,11 @@ const Handle = struct {
     allocator: std.mem.Allocator,
     io_backend: std.Io.Threaded,
     mutex: std.Io.Mutex = .init,
+    /// `mutex` protects ADB fields; this mutex serializes session lifetime
+    /// publication, borrowing and destruction.
+    adb_media_mutex: std.Io.Mutex = .init,
     request_available: std.Io.Condition = .init,
     adb_available: std.Io.Condition = .init,
-    adb_video_exited: std.Io.Condition = .init,
-    adb_audio_exited: std.Io.Condition = .init,
     state: platform.ConnectionState = .stopped,
     stop_requested: bool = false,
     worker: ?std.Thread = null,
@@ -232,6 +259,14 @@ const Handle = struct {
 
     fn unlock(self: *Handle) void {
         self.mutex.unlock(self.io());
+    }
+
+    fn lockAdbMedia(self: *Handle) void {
+        self.adb_media_mutex.lockUncancelable(self.io());
+    }
+
+    fn unlockAdbMedia(self: *Handle) void {
+        self.adb_media_mutex.unlock(self.io());
     }
 
     fn enqueueRequest(self: *Handle, request: Request) Result {
@@ -309,10 +344,16 @@ const Handle = struct {
             }
             if (self.adb_runtime.audio_failed) {
                 self.adb_runtime.audio_failed = false;
-                const session = self.adb_runtime.session;
+                self.unlock();
+                self.lockAdbMedia();
+                self.lock();
+                const session = if (self.media_lifecycle == .adb_active) self.adb_runtime.session.borrow() else null;
                 self.unlock();
                 if (session) |active| active.stopAudio();
-                _ = self.enqueueUnreserved(.media_state_changed, 0, .ok, "{\"state\":\"video_only\",\"backend\":\"adb_scrcpy\",\"reason\":\"audio_stream_failed\"}");
+                self.unlockAdbMedia();
+                if (session != null) {
+                    _ = self.enqueueUnreserved(.media_state_changed, 0, .ok, "{\"state\":\"video_only\",\"backend\":\"adb_scrcpy\",\"reason\":\"audio_stream_failed\"}");
+                }
                 continue;
             }
             if (self.adb_request_count == 0 and self.adb_stop_requested) {
@@ -648,7 +689,7 @@ const Handle = struct {
         self.enqueueReserved(.adb_state_changed, request.request_id, .ok, "{\"state\":\"starting_media\"}");
         self.lock();
         const authenticated = self.state == .connected;
-        const probed = self.adb_path_len != 0 and self.adb_runtime.server != null and self.adb_runtime.session == null;
+        const probed = self.adb_path_len != 0 and self.adb_runtime.server != null and self.adb_runtime.session.isEmpty();
         const available = self.media_lifecycle == .none;
         if (authenticated and probed and available) self.media_lifecycle = .adb_starting;
         self.unlock();
@@ -736,61 +777,58 @@ const Handle = struct {
             );
             return;
         };
+        // Session.start may take up to the bounded startup deadline. Revalidate
+        // the control connection before publishing its result, then keep final
+        // publication and all local pointer use serialized against teardown.
+        self.lockAdbMedia();
+        defer self.unlockAdbMedia();
         self.lock();
-        self.adb_runtime.session = session;
-        self.adb_runtime.media_stop_requested = false;
-        self.adb_runtime.video_starting = true;
-        self.adb_runtime.video_exited = false;
-        self.unlock();
-        const video_worker = std.Thread.spawn(.{}, Handle.adbVideoThreadMain, .{self}) catch {
-            self.lock();
-            self.adb_runtime.video_starting = false;
+        const connection_lost = self.state != .connected;
+        const can_publish = canPublishAdbSession(
+            self.state,
+            self.media_lifecycle,
+            self.adb_runtime.session.isEmpty(),
+            self.stop_requested or self.adb_stop_requested or self.adb_cancel_requested.load(.acquire),
+        );
+        if (!can_publish) {
             self.unlock();
-            _ = self.stopAdbMedia();
+            const cleaned = cleanupUnpublishedAdbSession(session);
+            if (!cleaned) self.terminateAdbServer();
+            self.enqueueReserved(
+                .media_state_changed,
+                request.request_id,
+                .cancelled,
+                if (connection_lost)
+                    "{\"state\":\"stopped\",\"backend\":\"adb_scrcpy\",\"reason\":\"control_connection_lost\"}"
+                else
+                    "{\"state\":\"stopped\",\"backend\":\"adb_scrcpy\",\"reason\":\"cancelled\"}",
+            );
+            self.enqueueReserved(
+                .request_complete,
+                request.request_id,
+                .cancelled,
+                if (connection_lost) "{\"error\":\"control_connection_lost\"}" else "{\"error\":\"cancelled\"}",
+            );
+            return;
+        }
+        self.adb_runtime.media_stop_requested = false;
+        const video_worker = std.Thread.spawn(.{}, Handle.adbVideoThreadMain, .{ self, session }) catch {
+            self.unlock();
+            const cleaned = cleanupUnpublishedAdbSession(session);
+            if (!cleaned) self.terminateAdbServer();
             self.enqueueReserved(.media_state_changed, request.request_id, .internal_error, "{\"state\":\"failed\",\"backend\":\"adb_scrcpy\",\"reason\":\"video_worker_start_failed\"}");
             self.enqueueReserved(.request_complete, request.request_id, .internal_error, "{\"error\":\"video_worker_start_failed\"}");
             return;
         };
-        self.lock();
-        if (self.adb_runtime.video_starting) {
-            self.adb_runtime.video_worker = video_worker;
-            self.adb_runtime.video_starting = false;
-            self.unlock();
-        } else {
-            // 另一线程（如连接丢失）已在赋值前调用 stopAdbMedia 并等待视频线程
-            // 退出；这里只回收线程句柄并中止启动流程，避免覆盖停止状态。
-            self.unlock();
-            video_worker.join();
-            self.enqueueReserved(.media_state_changed, request.request_id, .io_error, "{\"state\":\"failed\",\"backend\":\"adb_scrcpy\",\"reason\":\"video_stream_failed\"}");
-            self.enqueueReserved(.request_complete, request.request_id, .io_error, "{\"error\":\"scrcpy_start_failed\"}");
-            return;
-        }
+        var audio_worker: ?std.Thread = null;
         if (session.audio_stream != null) {
-            self.lock();
-            self.adb_runtime.audio_starting = true;
-            self.adb_runtime.audio_exited = false;
-            self.unlock();
-            const audio_worker = std.Thread.spawn(.{}, Handle.adbAudioThreadMain, .{self}) catch null;
-            if (audio_worker) |thread| {
-                self.lock();
-                if (self.adb_runtime.audio_starting) {
-                    self.adb_runtime.audio_worker = thread;
-                    self.adb_runtime.audio_starting = false;
-                    self.unlock();
-                } else {
-                    // stopAdbMedia 已接管音频线程的退出等待，仅回收句柄。
-                    self.unlock();
-                    thread.join();
-                }
-            } else {
-                session.stopAudio();
-                self.lock();
-                self.adb_runtime.audio_starting = false;
-                self.unlock();
-            }
+            audio_worker = std.Thread.spawn(.{}, Handle.adbAudioThreadMain, .{ self, session }) catch null;
+            if (audio_worker == null) session.stopAudio();
         }
-        const audio_active = session.audio_stream != null and self.adb_runtime.audio_worker != null;
-        self.lock();
+        std.debug.assert(self.adb_runtime.session.publish(session));
+        self.adb_runtime.video_worker = video_worker;
+        self.adb_runtime.audio_worker = audio_worker;
+        const audio_active = session.audio_stream != null and audio_worker != null;
         self.media_lifecycle = .adb_active;
         self.unlock();
         starting_owned = false;
@@ -875,8 +913,7 @@ const Handle = struct {
         return process_supervisor.ProcessSupervisor.init(self.allocator, self.io()).withCancel(&self.adb_cancel_requested);
     }
 
-    fn adbVideoThreadMain(self: *Handle) void {
-        defer self.adbVideoExited();
+    fn adbVideoThreadMain(self: *Handle, session: *scrcpy_manager.Session) void {
         const payload = self.allocator.alloc(u8, media_transport.max_packet_size) catch return self.adbVideoFailed();
         defer self.allocator.free(payload);
         const normalized = self.allocator.alloc(u8, media_transport.max_packet_size) catch return self.adbVideoFailed();
@@ -884,10 +921,9 @@ const Handle = struct {
         while (true) {
             self.lock();
             const stopping = self.adb_runtime.media_stop_requested or self.adb_stop_requested or self.stop_requested;
-            const session = self.adb_runtime.session;
             self.unlock();
-            if (stopping or session == null) return;
-            const packet = session.?.readVideo(payload, normalized) catch return self.adbVideoFailed();
+            if (stopping) return;
+            const packet = session.readVideo(payload, normalized) catch return self.adbVideoFailed();
             self.lock();
             self.media_queue.push(packet.header, packet.payload) catch |err| switch (err) {
                 error.DroppedIncomingVideo => {},
@@ -900,17 +936,15 @@ const Handle = struct {
         }
     }
 
-    fn adbAudioThreadMain(self: *Handle) void {
-        defer self.adbAudioExited();
+    fn adbAudioThreadMain(self: *Handle, session: *scrcpy_manager.Session) void {
         const payload = self.allocator.alloc(u8, media_transport.max_packet_size) catch return self.adbAudioFailed();
         defer self.allocator.free(payload);
         while (true) {
             self.lock();
             const stopping = self.adb_runtime.media_stop_requested or self.adb_stop_requested or self.stop_requested;
-            const session = self.adb_runtime.session;
             self.unlock();
-            if (stopping or session == null) return;
-            const packet = session.?.readAudio(payload) catch return self.adbAudioFailed();
+            if (stopping) return;
+            const packet = session.readAudio(payload) catch return self.adbAudioFailed();
             self.lock();
             self.media_queue.push(packet.header, packet.payload) catch {
                 self.unlock();
@@ -934,61 +968,24 @@ const Handle = struct {
         self.unlock();
     }
 
-    fn adbVideoExited(self: *Handle) void {
-        self.lock();
-        self.adb_runtime.video_exited = true;
-        self.adb_video_exited.signal(self.io());
-        self.unlock();
-    }
-
-    fn adbAudioExited(self: *Handle) void {
-        self.lock();
-        self.adb_runtime.audio_exited = true;
-        self.adb_audio_exited.signal(self.io());
-        self.unlock();
-    }
-
     fn stopAdbMedia(self: *Handle) bool {
+        self.lockAdbMedia();
+        defer self.unlockAdbMedia();
         self.lock();
         if (self.media_lifecycle == .adb_starting or self.media_lifecycle == .adb_active) self.media_lifecycle = .stopping;
         self.adb_runtime.media_stop_requested = true;
-        const session = self.adb_runtime.session;
+        const session = self.adb_runtime.session.take();
         const video_worker = self.adb_runtime.video_worker;
-        const video_starting = self.adb_runtime.video_starting;
         const audio_worker = self.adb_runtime.audio_worker;
-        const audio_starting = self.adb_runtime.audio_starting;
-        self.adb_runtime.session = null;
         self.adb_runtime.video_worker = null;
-        self.adb_runtime.video_starting = false;
         self.adb_runtime.audio_worker = null;
-        self.adb_runtime.audio_starting = false;
         self.adb_runtime.video_failed = false;
         self.adb_runtime.audio_failed = false;
-        const video_needs_wait = video_worker == null and video_starting and !self.adb_runtime.video_exited;
-        const audio_needs_wait = audio_worker == null and audio_starting and !self.adb_runtime.audio_exited;
         self.unlock();
         var cleanup_ok = true;
         const cleanup_deadline = if (session) |active| active.beginStop() else null;
-        if (video_worker) |thread| {
-            thread.join();
-        } else if (video_needs_wait) {
-            // 视频线程已 spawn 但尚未写入 video_worker 字段：等待其退出，
-            // 句柄由 processAdbMediaStart 赋值点回收后 join。
-            self.lock();
-            while (!self.adb_runtime.video_exited) {
-                self.adb_video_exited.waitUncancelable(self.io(), &self.mutex);
-            }
-            self.unlock();
-        }
-        if (audio_worker) |thread| {
-            thread.join();
-        } else if (audio_needs_wait) {
-            self.lock();
-            while (!self.adb_runtime.audio_exited) {
-                self.adb_audio_exited.waitUncancelable(self.io(), &self.mutex);
-            }
-            self.unlock();
-        }
+        if (video_worker) |thread| thread.join();
+        if (audio_worker) |thread| thread.join();
         if (session) |active| {
             if (cleanup_deadline) |deadline| active.finishStop(deadline) catch {
                 cleanup_ok = false;
@@ -1000,6 +997,17 @@ const Handle = struct {
         self.media_queue = media_transport.PacketQueue.init(self.allocator);
         if (self.media_lifecycle == .stopping) self.media_lifecycle = .none;
         self.unlock();
+        return cleanup_ok;
+    }
+
+    fn cleanupUnpublishedAdbSession(session: *scrcpy_manager.Session) bool {
+        var cleanup_ok = true;
+        if (session.beginStop()) |deadline| {
+            session.finishStop(deadline) catch {
+                cleanup_ok = false;
+            };
+        }
+        session.destroy();
         return cleanup_ok;
     }
 
@@ -1516,10 +1524,13 @@ const Handle = struct {
     }
 
     fn connectionLost(self: *Handle, err: anyerror) void {
+        // Invalidate authentication before waiting for ADB teardown so a
+        // concurrent Session.start result cannot be published afterward.
+        self.setState(.idle);
+        self.adb_cancel_event.set(self.io());
         self.stopMediaTransport();
         _ = self.stopAdbMedia();
         self.control.dropConnection();
-        self.setState(.idle);
         _ = self.enqueueUnreserved(.state_changed, 0, requestResult(err), "{\"state\":\"idle\",\"reason\":\"connection_lost\"}");
     }
 
@@ -2010,6 +2021,25 @@ test "managed ADB distinguishes first install from damaged managed state" {
     try std.testing.expectEqual(ManagedInstallState.upgrade_required, managedInstallState(true, false, false));
     try std.testing.expectEqual(ManagedInstallState.upgrade_required, managedInstallState(true, true, false));
     try std.testing.expectEqual(ManagedInstallState.ready, managedInstallState(true, true, true));
+}
+
+test "ADB session ownership transfers exactly once" {
+    var slot: OwnedSlot(u32) = .{};
+    try std.testing.expect(slot.isEmpty());
+    try std.testing.expect(slot.publish(7));
+    try std.testing.expect(!slot.publish(8));
+    try std.testing.expectEqual(@as(?u32, 7), slot.borrow());
+    try std.testing.expectEqual(@as(?u32, 7), slot.take());
+    try std.testing.expectEqual(@as(?u32, null), slot.take());
+    try std.testing.expect(slot.isEmpty());
+}
+
+test "ADB session publication requires a live authenticated startup" {
+    try std.testing.expect(canPublishAdbSession(.connected, .adb_starting, true, false));
+    try std.testing.expect(!canPublishAdbSession(.idle, .adb_starting, true, false));
+    try std.testing.expect(!canPublishAdbSession(.connected, .stopping, true, false));
+    try std.testing.expect(!canPublishAdbSession(.connected, .adb_starting, false, false));
+    try std.testing.expect(!canPublishAdbSession(.connected, .adb_starting, true, true));
 }
 
 test "C ABI lifecycle is idempotent and caller buffer remains owned" {
