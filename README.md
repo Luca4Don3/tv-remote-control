@@ -40,3 +40,26 @@ cd ../android-agent
 ```
 
 正式 Android 发布使用仓库外签名材料，并执行 `scripts/package-android-release.sh`。桌面本地打包使用 `scripts/package-local.sh`。两个入口都要求 `TVRC_SECURITY_AUDIT_SCANNER=<absolute_scanner_path>`，且离线审计 exit 0 后才会构建；依赖、ZIP、APK 和 checksum 均先写入项目 `.temp/`，全部门禁通过后才进入 `.artifacts/`。版本只从根目录 `VERSION` 读取，格式为 `major.minor.patch` 或 `major.minor-rcN`。
+
+## 致谢
+
+本项目受益于以下开源项目与工具，在此致以诚挚感谢：
+
+| 项目 | 版本 | 协议 | 用途 |
+|---|---|---|---|
+| [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) | 3.6.7 | Apache-2.0 | Windows 控制端 TLS 1.2/1.3 客户端 |
+| [scrcpy](https://github.com/Genymobile/scrcpy) | 4.1 | Apache-2.0 | 可选 ADB 视频/音频后端（`control=false`） |
+| [Android SDK Platform Tools](https://developer.android.com/tools/releases/platform-tools) | 37.0.1 | Android SDK License | 可选 ADB 工具，用户确认后安装 |
+| [Gradle](https://gradle.org) | 9.6.1 | Apache-2.0 | Android 构建 |
+| [Zig](https://ziglang.org) | 0.16 | MIT | Windows 控制端开发语言与工具链 |
+| [Kotlin](https://kotlinlang.org) | 随 Gradle 解析 | Apache-2.0 | Android 端开发语言 |
+| [Eclipse Temurin](https://adoptium.net) | 17 | GPL-2.0 with Classpath Exception | 构建工具链 JDK |
+| [JUnit](https://junit.org) | 4.13.2 | EPL-1.0 | Android 单元测试 |
+| macOS 系统框架（AppKit / AVFoundation / VideoToolbox / Metal） | — | Apple 许可 | macOS 控制端 |
+| Android 平台框架（AndroidX 与系统 API） | — | Apache-2.0 | APK 运行环境 |
+
+依赖锁定、校验和与许可摘要见 `dependencies.lock.json` 和 `THIRD_PARTY_NOTICES.md`。发布包必须附带各源码归档的完整许可文本。
+
+## 开源协议
+
+本项目源码采用 [Apache License 2.0](LICENSE) 发布，与所依赖的 Mbed TLS、scrcpy、Gradle、Kotlin 等 Apache 生态项目保持一致。第三方组件的许可信息见 `THIRD_PARTY_NOTICES.md`；项目自身的构建产物在打包时也会携带对应组件的完整许可文本。
