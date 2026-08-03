@@ -469,6 +469,7 @@ struct RemoteButton: View {
     }
 }
 
+@MainActor
 struct ContentView: View {
     @StateObject private var model = ControllerModel()
 
