@@ -1,3 +1,9 @@
+// glibc 在严格 ISO C 模式下默认不暴露 addrinfo/getaddrinfo；
+// POSIX.1-2008 特性宏必须在任何系统头包含之前声明（macOS 头文件不受此约束）
+#if !defined(_WIN32)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "tls_client.h"
 
 #include <stdlib.h>
