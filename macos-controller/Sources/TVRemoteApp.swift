@@ -35,7 +35,13 @@ final class CoreHandle: @unchecked Sendable {
             configuration.controller_name_len = UInt32(bytes.count)
             return tvrc_create(&configuration, &created)
         }
-        guard result == CoreResult.ok, created != nil else { return nil }
+        guard result == CoreResult.ok, created != nil else {
+            // configureMacOSCredentialCallbacks 已 passRetained 把 store 强引用传给 C 回调上下文；
+            // failable initializer 失败路径不会调用 deinit，必须手动 release 平衡引用避免泄漏。
+            // 成功路径由 deinit 中的 passUnretained().release() 负责，此处不变。
+            Unmanaged.passUnretained(credentialStore).release()
+            return nil
+        }
         raw = created
     }
 
@@ -219,7 +225,12 @@ final class ControllerModel: ObservableObject {
             } else if result == CoreResult.bufferTooSmall {
                 let required = Int(event.payload_len)
                 if required <= maxEventPayloadBytes {
-                    payload = [UInt8](repeating: 0, count: max(required, payload.count))
+                    // 必须严格大于事件 payload 的缓冲区（required == 当前容量时 C 库仍报 bufferTooSmall），
+                    // 用 required + 1 且指数增长避免死循环；min 保持 maxEventPayloadBytes 上限保护
+                    payload = [UInt8](
+                        repeating: 0,
+                        count: min(max(required + 1, payload.count * 2), maxEventPayloadBytes)
+                    )
                 } else {
                     // 超出保护上限：记录错误并退避，避免 busy-loop；事件由环形队列自然淘汰
                     NSLog("pollEvents: 事件 payload 超限（%u 字节），已丢弃", event.payload_len)
@@ -280,6 +291,9 @@ final class ControllerModel: ObservableObject {
         case CoreEvent.state:
             applyState(object, text: text)
         case CoreEvent.commandAck:
+            // 协议保证（windows-controller/src/abi.zig）：command_ack 仅由 sendKey 请求产生（成功时无 complete/error），
+            // 而 sendKey 从不设置 busy；设置 busy 的 discover/pair/connect/disconnect 请求均保证发 request_complete
+            // 或 error_event 来复位 busy，因此此处不重置 busy，避免破坏正常事件流
             if event.status != CoreResult.ok,
                let entry = presses.first(where: { $0.value.downRequestID == event.request_id }) {
                 entry.value.repeatTask.cancel()

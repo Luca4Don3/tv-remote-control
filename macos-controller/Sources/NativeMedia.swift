@@ -371,7 +371,13 @@ final class AACAudioEngine: @unchecked Sendable {
         // 用 AudioSpecificConfig 解析出的采样率/声道数配置解码格式，取代硬编码 48k/2ch
         let config = try Self.parseAudioSpecificConfiguration(audioSpecificConfiguration)
         let sampleRate = config.sampleRate
-        let channels = config.channelConfiguration
+        var channels = config.channelConfiguration
+        if channels == 0 {
+            // ISO 14496-3 channelConfiguration=0 表示声道数由 PCE 定义；当前解码器只支持 1-2 声道，
+            // 回退默认立体声避免整条音频链路不可用，并记录降级原因供电视端排查
+            NSLog("AACAudioEngine: channelConfiguration=0（PCE 定义声道），回退默认立体声")
+            channels = 2
+        }
         guard channels >= 1, channels <= 2 else { throw NativeMediaError.audioUnavailable }
         guard let source = AVAudioFormat(settings: [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
@@ -391,8 +397,14 @@ final class AACAudioEngine: @unchecked Sendable {
         resetLocked()
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: destination)
-        try engine.start()
-        player.play()
+        do {
+            // 启动前检查 isRunning 避免上次 stop 异步完成前的重复 start；失败时清理已 attach 的资源
+            if !engine.isRunning { try engine.start() }
+            player.play()
+        } catch {
+            resetLocked()
+            throw NativeMediaError.audioUnavailable
+        }
         compressedFormat = source
         outputFormat = destination
         self.converter = converter
