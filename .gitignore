@@ -15,3 +15,21 @@ windows-controller/tools/
 windows-controller/zig-pkg/
 /AGENTS.md
 /HANDOFF.md
+
+# Agent 内部文件：AGENT 间沟通、交接、规划、审查与提示记录（规范见 AGENTS.md，不入版本控制）
+/AGENTS.md
+/HANDOFF.md
+/HANDOFF-*.md
+/CONTEXT.md
+/PLAN.md
+/PROGRESS.md
+/SESSION.md
+/TRANSCRIPT.md
+/NOTES.md
+/AGENT-LOG.md
+/TODO.md
+/REVIEW-*.md
+/SCRATCH-*.md
+/PROMPT-*.md
+.pi/
+**/.pi/
