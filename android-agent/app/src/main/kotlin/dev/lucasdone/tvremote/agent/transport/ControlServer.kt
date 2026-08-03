@@ -94,6 +94,7 @@ class ControlServer(
         private var inboundSequence = 0L
         private var outboundSequence = 0L
 
+        @Synchronized
         fun read(): ProtocolEnvelope? {
             val frame = FrameCodec.read(socket.inputStream) ?: return null
             val envelope = ProtocolCodec.decode(frame)

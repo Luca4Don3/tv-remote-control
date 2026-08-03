@@ -44,13 +44,14 @@ class ProjectionService : Service() {
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         createChannel()
         startForeground(NOTIFICATION_ID, notification())
-        attachmentId = requestedAttachmentId
         projection = runCatching { manager.getMediaProjection(Activity.RESULT_OK, permissionData) }.getOrNull() ?: run {
+            // 获取 MediaProjection 失败：不设置 attachmentId，避免 onDestroy 重复清理语义。
             MediaRuntime.stopAttachment(requestedAttachmentId)
-            attachmentId = null
             stopSelf(startId)
             return START_NOT_STICKY
         }
+        // attachmentId 仅在投影成功获取后赋值，失败路径不持有 attachmentId。
+        attachmentId = requestedAttachmentId
         if (!MediaRuntime.startProjection(
                 this,
                 projection!!,

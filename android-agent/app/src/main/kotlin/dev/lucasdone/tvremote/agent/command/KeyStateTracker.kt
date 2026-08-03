@@ -34,14 +34,14 @@ class KeyStateTracker {
         if (!valid) {
             return CommandAck(command.sequence, AckStatus.REJECTED, "invalid key state transition")
         }
-        // 仅在全部校验通过后推进序列号，避免被拒命令造成重放拒绝（DoS）。
-        lastSequence = command.sequence
-
+        // 纯校验，无副作用：序列号推进延迟到 commit()，保证 executor 失败时不消耗序列号，客户端可重放。
         return CommandAck(command.sequence, AckStatus.SUCCESS)
     }
 
     @Synchronized
     fun commit(command: KeyEventCommand) {
+        // 仅在执行器成功（且校验通过）后推进序列号；被拒或失败的命令不消耗序列号，避免重放拒绝（DoS）。
+        lastSequence = command.sequence
         when (command.state) {
             KeyState.DOWN -> pressed.add(command.key)
             KeyState.UP -> pressed.remove(command.key)

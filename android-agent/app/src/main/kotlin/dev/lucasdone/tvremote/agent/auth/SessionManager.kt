@@ -107,7 +107,11 @@ class SessionManager(
         if (session.controllerId != controllerId) return false
         val now = nowMs()
         if (now >= session.expiresAtMs) return false
-        sessions[sessionId] = session.copy(expiresAtMs = now + SESSION_TTL_MS)
+        // 仅在过期时间变化时写回，避免每次 validate 都创建新 AuthSession 对象增加 GC 压力。
+        val renewedExpiry = now + SESSION_TTL_MS
+        if (renewedExpiry != session.expiresAtMs) {
+            sessions[sessionId] = session.copy(expiresAtMs = renewedExpiry)
+        }
         return true
     }
 

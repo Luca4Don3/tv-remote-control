@@ -30,6 +30,21 @@ class KeyStateTrackerTest {
     }
 
     @Test
+    fun validateHasNoSideEffectAndCommitAdvancesSequence() {
+        val tracker = KeyStateTracker()
+        // validate 是纯校验：通过后序列号不变，相同序列仍可通过。
+        assertEquals(AckStatus.SUCCESS, tracker.validate(command(1, KeyState.DOWN)).status)
+        assertEquals(AckStatus.SUCCESS, tracker.validate(command(1, KeyState.DOWN)).status)
+        // commit 才推进序列号：commit 后相同序列被拒。
+        tracker.commit(command(1, KeyState.DOWN))
+        assertEquals(AckStatus.REJECTED, tracker.validate(command(1, KeyState.DOWN)).status)
+        assertEquals(AckStatus.SUCCESS, tracker.validate(command(2, KeyState.REPEAT)).status)
+        tracker.commit(command(2, KeyState.REPEAT))
+        tracker.commit(command(3, KeyState.UP))
+        assertTrue(tracker.releaseAll().isEmpty())
+    }
+
+    @Test
     fun releasesPressedKeysOnDisconnect() {
         val tracker = KeyStateTracker()
         tracker.accept(command(1, KeyState.DOWN))

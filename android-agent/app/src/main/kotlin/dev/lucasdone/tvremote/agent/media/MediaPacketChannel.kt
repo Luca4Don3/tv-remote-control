@@ -56,9 +56,14 @@ class MediaPacketChannel(
                 if (shouldFlush) output.flush()
             }
         } finally {
+            // 进入 finally 前保存中断状态快照：close() 不会修改 interrupted 标志，但基于快照
+            // 才能在 close() 之后区分「中断退出」与「正常关闭」，且 close() 本身不受异常影响。
+            val wasInterrupted = interrupted.get()
+            // close() 幂等（AtomicBoolean CAS 保护），此处只真正执行一次关闭。
             close()
-            // 区分正常关闭与中断：中断时向上抛出，供调用方区分结束原因。
-            if (interrupted.get()) {
+            if (wasInterrupted) {
+                // 中断标志已在 take() 中通过 Thread.currentThread().interrupt() 恢复并保持，
+                // 此处抛出 InterruptedIOException 供调用方区分结束原因并可重试。
                 throw InterruptedIOException("media write loop was interrupted")
             }
         }
