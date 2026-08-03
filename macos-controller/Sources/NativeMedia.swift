@@ -58,7 +58,7 @@ final class MetalVideoView: MTKView {
     }
 }
 
-private final class MetalFrameRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
+private final class MetalFrameRenderer: NSObject, @preconcurrency MTKViewDelegate, @unchecked Sendable {
     private let commandQueue: MTLCommandQueue
     private let context: CIContext
     private let lock = NSLock()
