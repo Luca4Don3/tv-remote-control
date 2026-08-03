@@ -25,7 +25,7 @@ Android TV 应用开发测试辅助工具：电视端 APK 提供安全的按键�
 - Windows `ADB 设置` 已接通独立 ABI/worker、保存路径/PATH/管理目录探针、私有 5038 server、设备选择、官方依赖安装和 scrcpy 媒体链路；默认关闭，失败不影响 APK 遥控且不会自动触发 MediaProjection。
 - x64/ARM64 可在用户确认后安装或升级锁定的 Google Platform Tools；x86 仅允许用户选择 `adb.exe` 并完整探针，不包含安装入口、scrcpy server 或 ADB 媒体。
 
-`UNVERIFIED`：Android encoder 实际重建、电视授权撤销与 60 分钟会话；Windows x64/ARM64/x86 的 ADB/scrcpy、无音频、断线两秒释放与安装故障回滚；Android 正式签名。交叉编译不视为真机结论。
+`UNVERIFIED`：Android encoder 实际重建、电视授权撤销与 60 分钟会话；Windows x64/ARM64 的 ADB 安装/升级/回滚、scrcpy、无音频降级与断线两秒释放；Windows x86 仅待手动 `adb.exe` 完整探针，不具备 scrcpy 媒体能力；Android 正式签名。交叉编译不视为真机结论。
 
 ## 开发验证
 
@@ -37,6 +37,10 @@ zig build test
 
 cd ../android-agent
 ./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease
+
+# 具备 JDK 17、Zig 0.16.0、Android SDK；macOS 上另执行 Swift 与 app 链接门禁
+cd ..
+./scripts/run-quality-gates.sh
 ```
 
 正式 Android 发布使用仓库外签名材料，并执行 `scripts/package-android-release.sh`。桌面本地打包使用 `scripts/package-local.sh`。两个入口都要求 `TVRC_SECURITY_AUDIT_SCANNER=<absolute_scanner_path>`，且离线审计 exit 0 后才会构建；依赖、ZIP、APK 和 checksum 均先写入项目 `.temp/`，全部门禁通过后才进入 `.artifacts/`。版本只从根目录 `VERSION` 读取，格式为 `major.minor.patch` 或 `major.minor-rcN`。
