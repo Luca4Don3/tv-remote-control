@@ -134,6 +134,13 @@ const AdbRuntime = struct {
     session: ?*scrcpy_manager.Session = null,
     video_worker: ?std.Thread = null,
     audio_worker: ?std.Thread = null,
+    /// spawn 返回与写入 video_worker 字段之间存在“启动中”窗口：stopAdbMedia
+    /// 在 worker 为 null 但 *_starting 为 true 时等待线程退出（*_exited），
+    /// 线程句柄随后由 spawn 方在赋值点回收。
+    video_starting: bool = false,
+    video_exited: bool = false,
+    audio_starting: bool = false,
+    audio_exited: bool = false,
     media_stop_requested: bool = false,
     video_failed: bool = false,
     audio_failed: bool = false,
@@ -179,6 +186,8 @@ const Handle = struct {
     mutex: std.Io.Mutex = .init,
     request_available: std.Io.Condition = .init,
     adb_available: std.Io.Condition = .init,
+    adb_video_exited: std.Io.Condition = .init,
+    adb_audio_exited: std.Io.Condition = .init,
     state: platform.ConnectionState = .stopped,
     stop_requested: bool = false,
     worker: ?std.Thread = null,
@@ -730,22 +739,55 @@ const Handle = struct {
         self.lock();
         self.adb_runtime.session = session;
         self.adb_runtime.media_stop_requested = false;
+        self.adb_runtime.video_starting = true;
+        self.adb_runtime.video_exited = false;
         self.unlock();
         const video_worker = std.Thread.spawn(.{}, Handle.adbVideoThreadMain, .{self}) catch {
+            self.lock();
+            self.adb_runtime.video_starting = false;
+            self.unlock();
             _ = self.stopAdbMedia();
             self.enqueueReserved(.media_state_changed, request.request_id, .internal_error, "{\"state\":\"failed\",\"backend\":\"adb_scrcpy\",\"reason\":\"video_worker_start_failed\"}");
             self.enqueueReserved(.request_complete, request.request_id, .internal_error, "{\"error\":\"video_worker_start_failed\"}");
             return;
         };
         self.lock();
-        self.adb_runtime.video_worker = video_worker;
-        self.unlock();
-        if (session.audio_stream != null) {
-            const audio_worker = std.Thread.spawn(.{}, Handle.adbAudioThreadMain, .{self}) catch null;
-            if (audio_worker == null) session.stopAudio();
-            self.lock();
-            self.adb_runtime.audio_worker = audio_worker;
+        if (self.adb_runtime.video_starting) {
+            self.adb_runtime.video_worker = video_worker;
+            self.adb_runtime.video_starting = false;
             self.unlock();
+        } else {
+            // 另一线程（如连接丢失）已在赋值前调用 stopAdbMedia 并等待视频线程
+            // 退出；这里只回收线程句柄并中止启动流程，避免覆盖停止状态。
+            self.unlock();
+            video_worker.join();
+            self.enqueueReserved(.media_state_changed, request.request_id, .io_error, "{\"state\":\"failed\",\"backend\":\"adb_scrcpy\",\"reason\":\"video_stream_failed\"}");
+            self.enqueueReserved(.request_complete, request.request_id, .io_error, "{\"error\":\"scrcpy_start_failed\"}");
+            return;
+        }
+        if (session.audio_stream != null) {
+            self.lock();
+            self.adb_runtime.audio_starting = true;
+            self.adb_runtime.audio_exited = false;
+            self.unlock();
+            const audio_worker = std.Thread.spawn(.{}, Handle.adbAudioThreadMain, .{self}) catch null;
+            if (audio_worker) |thread| {
+                self.lock();
+                if (self.adb_runtime.audio_starting) {
+                    self.adb_runtime.audio_worker = thread;
+                    self.adb_runtime.audio_starting = false;
+                    self.unlock();
+                } else {
+                    // stopAdbMedia 已接管音频线程的退出等待，仅回收句柄。
+                    self.unlock();
+                    thread.join();
+                }
+            } else {
+                session.stopAudio();
+                self.lock();
+                self.adb_runtime.audio_starting = false;
+                self.unlock();
+            }
         }
         const audio_active = session.audio_stream != null and self.adb_runtime.audio_worker != null;
         self.lock();
@@ -834,6 +876,7 @@ const Handle = struct {
     }
 
     fn adbVideoThreadMain(self: *Handle) void {
+        defer self.adbVideoExited();
         const payload = self.allocator.alloc(u8, media_transport.max_packet_size) catch return self.adbVideoFailed();
         defer self.allocator.free(payload);
         const normalized = self.allocator.alloc(u8, media_transport.max_packet_size) catch return self.adbVideoFailed();
@@ -858,6 +901,7 @@ const Handle = struct {
     }
 
     fn adbAudioThreadMain(self: *Handle) void {
+        defer self.adbAudioExited();
         const payload = self.allocator.alloc(u8, media_transport.max_packet_size) catch return self.adbAudioFailed();
         defer self.allocator.free(payload);
         while (true) {
@@ -890,23 +934,61 @@ const Handle = struct {
         self.unlock();
     }
 
+    fn adbVideoExited(self: *Handle) void {
+        self.lock();
+        self.adb_runtime.video_exited = true;
+        self.adb_video_exited.signal(self.io());
+        self.unlock();
+    }
+
+    fn adbAudioExited(self: *Handle) void {
+        self.lock();
+        self.adb_runtime.audio_exited = true;
+        self.adb_audio_exited.signal(self.io());
+        self.unlock();
+    }
+
     fn stopAdbMedia(self: *Handle) bool {
         self.lock();
         if (self.media_lifecycle == .adb_starting or self.media_lifecycle == .adb_active) self.media_lifecycle = .stopping;
         self.adb_runtime.media_stop_requested = true;
         const session = self.adb_runtime.session;
         const video_worker = self.adb_runtime.video_worker;
+        const video_starting = self.adb_runtime.video_starting;
         const audio_worker = self.adb_runtime.audio_worker;
+        const audio_starting = self.adb_runtime.audio_starting;
         self.adb_runtime.session = null;
         self.adb_runtime.video_worker = null;
+        self.adb_runtime.video_starting = false;
         self.adb_runtime.audio_worker = null;
+        self.adb_runtime.audio_starting = false;
         self.adb_runtime.video_failed = false;
         self.adb_runtime.audio_failed = false;
+        const video_needs_wait = video_worker == null and video_starting and !self.adb_runtime.video_exited;
+        const audio_needs_wait = audio_worker == null and audio_starting and !self.adb_runtime.audio_exited;
         self.unlock();
         var cleanup_ok = true;
         const cleanup_deadline = if (session) |active| active.beginStop() else null;
-        if (video_worker) |thread| thread.join();
-        if (audio_worker) |thread| thread.join();
+        if (video_worker) |thread| {
+            thread.join();
+        } else if (video_needs_wait) {
+            // 视频线程已 spawn 但尚未写入 video_worker 字段：等待其退出，
+            // 句柄由 processAdbMediaStart 赋值点回收后 join。
+            self.lock();
+            while (!self.adb_runtime.video_exited) {
+                self.adb_video_exited.waitUncancelable(self.io(), &self.mutex);
+            }
+            self.unlock();
+        }
+        if (audio_worker) |thread| {
+            thread.join();
+        } else if (audio_needs_wait) {
+            self.lock();
+            while (!self.adb_runtime.audio_exited) {
+                self.adb_audio_exited.waitUncancelable(self.io(), &self.mutex);
+            }
+            self.unlock();
+        }
         if (session) |active| {
             if (cleanup_deadline) |deadline| active.finishStop(deadline) catch {
                 cleanup_ok = false;

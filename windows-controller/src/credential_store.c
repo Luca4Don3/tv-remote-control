@@ -116,7 +116,7 @@ int32_t tvrc_platform_credentials_get(void *context,
     }
     if (plaintext.cbData == 0 || plaintext.cbData > 4096) goto cleanup;
     *secret_len = plaintext.cbData;
-    if (secret_capacity < plaintext.cbData || secret == NULL) {
+    if (secret == NULL || secret_capacity < plaintext.cbData) {
         result = TVRC_CREDENTIAL_BUFFER_TOO_SMALL;
         goto cleanup;
     }

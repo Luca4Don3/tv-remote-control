@@ -166,8 +166,47 @@ pub const Session = struct {
         var audio_stream = if (options.enable_audio) try connectWithRetry(io, local_port, deadline) else null;
         errdefer if (audio_stream) |stream| stream.close(io);
 
+        // 握手与媒体元数据读取全部在 Session 分配与 `session.* =` 赋值之前完成：
+        // 一切失败都发生在 managed/video_stream/audio_stream 被复制进 session
+        // 之前，errdefer 只操作未 move 的局部变量，不依赖值复制语义；Session
+        // 创建之后不存在可能失败的操作，因此无需依赖外层 errdefer 清理 session。
+        var video_reader_buffer: [16 * 1024]u8 = undefined;
+        var video_reader = std.Io.net.Stream.Reader.init(video_stream, io, &video_reader_buffer);
+        var dummy: [1]u8 = undefined;
+        _ = try deadline.remaining(io, startup_deadline_ms);
+        try readAllUntil(&video_reader.interface, &dummy, io, options.cancel_event, deadline);
+        if (dummy[0] != 0) return error.InvalidScrcpyHandshake;
+        var device_name_bytes: [protocol.device_name_length]u8 = undefined;
+        try readAllUntil(&video_reader.interface, &device_name_bytes, io, options.cancel_event, deadline);
+        const device_name = try protocol.validateDeviceName(&device_name_bytes);
+        var video_metadata_bytes: [protocol.video_codec_metadata_length]u8 = undefined;
+        try readAllUntil(&video_reader.interface, &video_metadata_bytes, io, options.cancel_event, deadline);
+        const video_metadata = try protocol.VideoMetadata.decode(&video_metadata_bytes);
+        var audio_reader_buffer: [8 * 1024]u8 = undefined;
+        var audio_reader = if (audio_stream) |stream| std.Io.net.Stream.Reader.init(stream, io, &audio_reader_buffer) else null;
+        if (audio_reader != null) {
+            _ = try deadline.remaining(io, startup_deadline_ms);
+            var audio_metadata_bytes: [protocol.audio_codec_metadata_length]u8 = undefined;
+            // 音频元数据不可用仅降级为纯视频会话（与原有行为一致）：取消与
+            // 启动超时按启动失败处理，其余错误关闭音频流后继续返回会话。
+            const audio_metadata_result = readAllUntil(&audio_reader.?.interface, &audio_metadata_bytes, io, options.cancel_event, deadline);
+            if (audio_metadata_result) |_| {
+                if (!audioMetadataAvailable(&audio_metadata_bytes)) {
+                    audio_stream.?.close(io);
+                    audio_stream = null;
+                }
+            } else |err| {
+                switch (err) {
+                    error.Canceled, error.ScrcpyStartupDeadlineExceeded => return err,
+                    else => {
+                        audio_stream.?.close(io);
+                        audio_stream = null;
+                    },
+                }
+            }
+        }
+
         const session = try allocator.create(Session);
-        errdefer allocator.destroy(session);
         session.* = .{
             .allocator = allocator,
             .io = io,
@@ -178,42 +217,15 @@ pub const Session = struct {
             .server_process = managed,
             .video_stream = video_stream,
             .audio_stream = audio_stream,
-            .video_adapter = undefined,
+            .device_name_len = @intCast(device_name.len),
+            .video_adapter = .init(video_metadata),
             .cancel_event = options.cancel_event,
         };
         @memcpy(session.serial[0..options.serial.len], options.serial);
+        @memcpy(session.device_name[0..device_name.len], device_name);
         session.video_reader = .init(session.video_stream, io, &session.video_reader_buffer);
-        if (audio_stream != null) {
+        if (session.audio_stream != null) {
             session.audio_reader = .init(session.audio_stream.?, io, &session.audio_reader_buffer);
-        }
-
-        var dummy: [1]u8 = undefined;
-        _ = try deadline.remaining(io, startup_deadline_ms);
-        try readAllUntil(&session.video_reader.interface, &dummy, io, options.cancel_event, deadline);
-        if (dummy[0] != 0) return error.InvalidScrcpyHandshake;
-        try readAllUntil(&session.video_reader.interface, &session.device_name, io, options.cancel_event, deadline);
-        const device_name = try protocol.validateDeviceName(&session.device_name);
-        session.device_name_len = @intCast(device_name.len);
-        var video_metadata_bytes: [protocol.video_codec_metadata_length]u8 = undefined;
-        try readAllUntil(&session.video_reader.interface, &video_metadata_bytes, io, options.cancel_event, deadline);
-        const video_metadata = try protocol.VideoMetadata.decode(&video_metadata_bytes);
-        session.video_adapter = .init(video_metadata);
-        if (audio_stream != null) {
-            _ = try deadline.remaining(io, startup_deadline_ms);
-            var audio_metadata_bytes: [protocol.audio_codec_metadata_length]u8 = undefined;
-            readAllUntil(&session.audio_reader.interface, &audio_metadata_bytes, io, options.cancel_event, deadline) catch |err| switch (err) {
-                error.Canceled, error.ScrcpyStartupDeadlineExceeded => return err,
-                else => {
-                    audio_stream.?.close(io);
-                    session.audio_stream = null;
-                    return session;
-                },
-            };
-            if (!audioMetadataAvailable(&audio_metadata_bytes)) {
-                audio_stream.?.close(io);
-                session.audio_stream = null;
-                return session;
-            }
         }
         return session;
     }
