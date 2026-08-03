@@ -81,6 +81,7 @@ private final class MetalFrameRenderer: NSObject, MTKViewDelegate, @unchecked Se
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    @MainActor
     func draw(in view: MTKView) {
         let current = lock.withLock { frame }
         guard let current,
