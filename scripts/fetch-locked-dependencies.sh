@@ -57,6 +57,33 @@ fetch_locked \
     "https://dl.google.com/android/repository/platform-tools_r37.0.1-win.zip" \
     "$platform_tools_windows" 8044989 \
     45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99
+fetch_locked \
+    "https://dl.google.com/android/repository/repository2-1.xml" \
+    "$cache_dir/repository2-1.xml" 367919 \
+    ea0509d1f955495ed543d9b16edfb55758fc3df5177210b043580e6d563d0b32
+
+# 从仓库元数据提取 Android SDK License 文本，作为 platform-tools 的随包许可
+android_sdk_license="$vendor_dir/android-sdk-license.txt"
+python3 - "$cache_dir/repository2-1.xml" "$android_sdk_license" <<'PY'
+import re
+import sys
+
+source, target = sys.argv[1:3]
+with open(source, encoding="utf-8") as handle:
+    xml = handle.read()
+match = re.search(r'<license id="android-sdk-license"[^>]*>(.*?)</license>', xml, re.S)
+if not match:
+    print(f"android-sdk-license node not found in {source}", file=sys.stderr)
+    sys.exit(1)
+text = re.sub(r"<[^>]+>", "", match.group(1)).strip() + "\n"
+with open(target, "w", encoding="utf-8") as handle:
+    handle.write(text)
+print(f"wrote {len(text)} bytes to {target}")
+PY
+[ "$(wc -c < "$android_sdk_license" | tr -d '[:space:]')" = "16962" ] || {
+    echo "android-sdk-license.txt size mismatch" >&2
+    exit 1
+}
 
 mbedtls_target="$vendor_dir/mbedtls-3.6.7"
 if [ ! -d "$mbedtls_target" ]; then

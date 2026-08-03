@@ -90,7 +90,7 @@ def main() -> None:
     )
     platform_tools = exact_keys(
         dependencies["androidPlatformToolsWindows"],
-        {"version", "repositoryMetadataUrl", "url", "size", "repositoryChecksumAlgorithm", "repositoryChecksum", "sha256", "license"},
+        {"version", "repositoryMetadataUrl", "repositoryMetadataSize", "repositoryMetadataSha256", "url", "size", "repositoryChecksumAlgorithm", "repositoryChecksum", "sha256", "license"},
         "androidPlatformToolsWindows",
     )
     minicap = exact_keys(dependencies["minicap"], {"state", "artifacts"}, "minicap")
