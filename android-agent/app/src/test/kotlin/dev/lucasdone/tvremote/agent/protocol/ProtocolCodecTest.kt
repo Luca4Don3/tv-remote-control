@@ -37,6 +37,20 @@ class ProtocolCodecTest {
     }
 
     @Test
+    fun identifiersUseBoundedAsciiCharacterSetWithoutChangingGeneralStrings() {
+        val valid = ProtocolCodec.encode(ProtocolEnvelope(1, "request_1:a.b-c", "session-1", 1, "ping", jsonObject()))
+        assertEquals("request_1:a.b-c", ProtocolCodec.decode(valid).requestId)
+        val invalidRequest = valid.toString(Charsets.UTF_8)
+            .replace("request_1:a.b-c", "request/1")
+            .toByteArray()
+        assertThrows(ProtocolException::class.java) { ProtocolCodec.decode(invalidRequest) }
+        val invalidSession = valid.toString(Charsets.UTF_8)
+            .replace("session-1", "session 1")
+            .toByteArray()
+        assertThrows(ProtocolException::class.java) { ProtocolCodec.decode(invalidSession) }
+    }
+
+    @Test
     fun strictJsonRejectsDuplicateFieldsDeepNestingAndInvalidUtf8() {
         assertThrows(JsonParseException::class.java) {
             StrictJson.parseObject("{\"a\":1,\"a\":2}".toByteArray())

@@ -1,6 +1,7 @@
 package dev.lucasdone.tvremote.agent.transport
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class TlsPolicyTest {
@@ -29,5 +30,15 @@ class TlsPolicyTest {
     fun pre21PrefersAeadWhenAvailable() {
         // API 19/20 若实际支持 AEAD，仍优先使用 AEAD，不回退到 CBC。
         assertEquals(aead, TlsPolicy.selectCiphers(aead + cbcFallback, 19))
+    }
+
+    @Test
+    fun unavailableProtocolsAndCipherSuitesFailExplicitly() {
+        assertThrows(IllegalStateException::class.java) {
+            TlsPolicy.selectProtocols(listOf("TLSv1.3"))
+        }
+        assertThrows(IllegalStateException::class.java) {
+            TlsPolicy.requireApprovedCiphers(otherCbc, 34)
+        }
     }
 }

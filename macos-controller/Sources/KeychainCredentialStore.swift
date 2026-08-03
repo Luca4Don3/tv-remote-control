@@ -1,27 +1,6 @@
 import Foundation
 import Security
 
-struct StoredCredential: Codable, Sendable {
-    let tvId: String
-    let controllerId: String
-    let secret: Data
-    let certificateFingerprint: Data
-    let displayName: String
-    let lastEndpoint: String
-
-    init(tvId: String, controllerId: String, secret: Data, certificateFingerprint: Data,
-         displayName: String, lastEndpoint: String) throws {
-        guard !tvId.isEmpty, !controllerId.isEmpty else { throw KeychainStoreError.invalidRecord }
-        guard secret.count == 32, certificateFingerprint.count == 32 else { throw KeychainStoreError.invalidRecord }
-        self.tvId = tvId
-        self.controllerId = controllerId
-        self.secret = secret
-        self.certificateFingerprint = certificateFingerprint
-        self.displayName = displayName
-        self.lastEndpoint = lastEndpoint
-    }
-}
-
 enum KeychainStoreError: Error {
     case invalidRecord
     case unexpectedData
@@ -31,52 +10,9 @@ enum KeychainStoreError: Error {
 final class KeychainCredentialStore: @unchecked Sendable {
     static let service = "dev.lucasdone.tv-remote-control"
     private let lock = NSLock()
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
-
-    func put(_ record: StoredCredential) throws {
-        let data = try encoder.encode(record)
+    private func remove(account: String) throws {
         try lock.withLock {
-            let query = baseQuery(account: record.tvId)
-            // kSecAttrAccessible 仅在创建（SecItemAdd）时生效；更新路径必须移除，否则可能返回参数错误
-            let attributes: [CFString: Any] = [
-                kSecValueData: data,
-                kSecAttrLabel: record.displayName,
-            ]
-            let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-            if updateStatus == errSecItemNotFound {
-                var insertion = query
-                attributes.forEach { insertion[$0] = $1 }
-                insertion[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-                let addStatus = SecItemAdd(insertion as CFDictionary, nil)
-                guard addStatus == errSecSuccess else { throw KeychainStoreError.status(addStatus) }
-            } else if updateStatus != errSecSuccess {
-                throw KeychainStoreError.status(updateStatus)
-            }
-        }
-    }
-
-    func get(tvId: String) throws -> StoredCredential? {
-        try lock.withLock {
-            var query = baseQuery(account: tvId)
-            query[kSecReturnData] = true
-            query[kSecMatchLimit] = kSecMatchLimitOne
-            var item: CFTypeRef?
-            let status = SecItemCopyMatching(query as CFDictionary, &item)
-            if status == errSecItemNotFound { return nil }
-            guard status == errSecSuccess else { throw KeychainStoreError.status(status) }
-            guard let data = item as? Data else { throw KeychainStoreError.unexpectedData }
-            let record = try decoder.decode(StoredCredential.self, from: data)
-            guard record.tvId == tvId, record.secret.count == 32, record.certificateFingerprint.count == 32 else {
-                throw KeychainStoreError.invalidRecord
-            }
-            return record
-        }
-    }
-
-    func remove(tvId: String) throws {
-        try lock.withLock {
-            let status = SecItemDelete(baseQuery(account: tvId) as CFDictionary)
+            let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
             guard status == errSecSuccess || status == errSecItemNotFound else {
                 throw KeychainStoreError.status(status)
             }
@@ -134,7 +70,7 @@ final class KeychainCredentialStore: @unchecked Sendable {
             throw KeychainStoreError.invalidRecord
         }
         let account = credentialID.map { String(format: "%02x", $0) }.joined()
-        try remove(tvId: account)
+        try remove(account: account)
     }
 
     private func baseQuery(account: String) -> [CFString: Any] {
@@ -147,13 +83,11 @@ final class KeychainCredentialStore: @unchecked Sendable {
     }
 }
 
-private enum CoreCredentialResult {
-    static let ok: Int32 = 0
-    static let invalidArgument: Int32 = 1
-    static let bufferTooSmall: Int32 = 4
-    static let ioError: Int32 = 5
-    static let notFound: Int32 = 6
-}
+private let credentialOK = Int32(TVRC_CREDENTIAL_OK)
+private let credentialInvalidArgument = Int32(TVRC_CREDENTIAL_INVALID_ARGUMENT)
+private let credentialBufferTooSmall = Int32(TVRC_CREDENTIAL_BUFFER_TOO_SMALL)
+private let credentialIOError = Int32(TVRC_CREDENTIAL_IO_ERROR)
+private let credentialNotFound = Int32(TVRC_CREDENTIAL_NOT_FOUND)
 
 func configureMacOSCredentialCallbacks(
     _ configuration: inout tvrc_config,
@@ -178,7 +112,7 @@ func tvrcMacOSCredentialsPut(
     guard let context, let credentialID, let secret,
           credentialIDLength > 0, credentialIDLength <= 64,
           secretLength > 0, secretLength <= 4096 else {
-        return CoreCredentialResult.invalidArgument
+        return credentialInvalidArgument
     }
     let store = Unmanaged<KeychainCredentialStore>.fromOpaque(context).takeUnretainedValue()
     do {
@@ -186,9 +120,9 @@ func tvrcMacOSCredentialsPut(
             credentialID: Data(bytes: credentialID, count: Int(credentialIDLength)),
             value: Data(bytes: secret, count: Int(secretLength))
         )
-        return CoreCredentialResult.ok
+        return credentialOK
     } catch {
-        return CoreCredentialResult.ioError
+        return credentialIOError
     }
 }
 
@@ -203,7 +137,7 @@ func tvrcMacOSCredentialsGet(
 ) -> Int32 {
     guard let context, let credentialID, let secretLength,
           credentialIDLength > 0, credentialIDLength <= 64 else {
-        return CoreCredentialResult.invalidArgument
+        return credentialInvalidArgument
     }
     let store = Unmanaged<KeychainCredentialStore>.fromOpaque(context).takeUnretainedValue()
     do {
@@ -211,18 +145,18 @@ func tvrcMacOSCredentialsGet(
             credentialID: Data(bytes: credentialID, count: Int(credentialIDLength))
         ) else {
             secretLength.pointee = 0
-            return CoreCredentialResult.notFound
+            return credentialNotFound
         }
         secretLength.pointee = UInt32(value.count)
-        guard value.count <= secretCapacity else { return CoreCredentialResult.bufferTooSmall }
-        guard value.isEmpty || secret != nil else { return CoreCredentialResult.invalidArgument }
+        guard value.count <= secretCapacity else { return credentialBufferTooSmall }
+        guard value.isEmpty || secret != nil else { return credentialInvalidArgument }
         if let secret {
             value.copyBytes(to: secret, count: value.count)
         }
-        return CoreCredentialResult.ok
+        return credentialOK
     } catch {
         secretLength.pointee = 0
-        return CoreCredentialResult.ioError
+        return credentialIOError
     }
 }
 
@@ -234,14 +168,14 @@ func tvrcMacOSCredentialsRemove(
 ) -> Int32 {
     guard let context, let credentialID,
           credentialIDLength > 0, credentialIDLength <= 64 else {
-        return CoreCredentialResult.invalidArgument
+        return credentialInvalidArgument
     }
     let store = Unmanaged<KeychainCredentialStore>.fromOpaque(context).takeUnretainedValue()
     do {
         try store.removeBlob(credentialID: Data(bytes: credentialID, count: Int(credentialIDLength)))
-        return CoreCredentialResult.ok
+        return credentialOK
     } catch {
-        return CoreCredentialResult.ioError
+        return credentialIOError
     }
 }
 

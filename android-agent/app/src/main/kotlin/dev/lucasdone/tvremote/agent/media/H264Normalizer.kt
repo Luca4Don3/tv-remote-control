@@ -6,10 +6,8 @@ import java.nio.ByteOrder
 
 object H264Normalizer {
     fun configurationRecord(csd0: ByteArray, csd1: ByteArray): ByteArray {
-        val sps = firstNal(csd0)
-        val pps = firstNal(csd1)
-        require(sps.size >= 4 && (sps[0].toInt() and 0x1f) == 7) { "invalid H.264 SPS" }
-        require(pps.isNotEmpty() && (pps[0].toInt() and 0x1f) == 8) { "invalid H.264 PPS" }
+        val sps = requireNal(firstNal(csd0), expectedType = 7, minimumSize = 4, label = "SPS")
+        val pps = requireNal(firstNal(csd1), expectedType = 8, minimumSize = 2, label = "PPS")
         require(sps.size <= 0xffff && pps.size <= 0xffff)
         return ByteArrayOutputStream(11 + sps.size + pps.size).apply {
             write(1)
@@ -59,6 +57,14 @@ object H264Normalizer {
         val nalStart = start + startCodeLength(input, start)
         val next = findStartCode(input, nalStart)
         return input.copyOfRange(nalStart, if (next < 0) input.size else next)
+    }
+
+    private fun requireNal(input: ByteArray, expectedType: Int, minimumSize: Int, label: String): ByteArray {
+        require(input.size >= minimumSize) { "truncated H.264 $label" }
+        val header = input[0].toInt() and 0xff
+        require(header and 0x80 == 0) { "invalid H.264 $label forbidden_zero_bit" }
+        require(header and 0x1f == expectedType) { "invalid H.264 $label NAL type" }
+        return input
     }
 
     private fun validateAvcc(input: ByteArray) {

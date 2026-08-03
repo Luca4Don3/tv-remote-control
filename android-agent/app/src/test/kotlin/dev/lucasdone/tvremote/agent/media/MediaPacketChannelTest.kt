@@ -6,6 +6,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
+import java.io.InterruptedIOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 class MediaPacketChannelTest {
@@ -57,6 +60,28 @@ class MediaPacketChannelTest {
         }
         assertFalse(channel.offer(videoPacket(MediaPacketChannel.MAX_PACKETS.toLong() + 1L)))
         channel.close()
+    }
+
+    @Test
+    fun interruptedWriterClosesTransportAndReportsInterruption() {
+        val started = CountDownLatch(1)
+        var transportClosed = false
+        val channel = MediaPacketChannel(ByteArrayOutputStream()) { transportClosed = true }
+        val failure = AtomicReference<Throwable?>()
+        val writer = Thread {
+            started.countDown()
+            try {
+                channel.writeLoop()
+            } catch (error: Throwable) {
+                failure.set(error)
+            }
+        }.apply { start() }
+        assertTrue(started.await(1, TimeUnit.SECONDS))
+        writer.interrupt()
+        writer.join(1_000)
+        assertFalse(writer.isAlive)
+        assertTrue(transportClosed)
+        assertTrue(failure.get() is InterruptedIOException)
     }
 
     private fun videoPacket(sequence: Long) = MediaPacket(

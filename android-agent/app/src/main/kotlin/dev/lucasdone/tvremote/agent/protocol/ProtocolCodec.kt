@@ -25,16 +25,27 @@ object ProtocolCodec {
         }
         val version = root.requireLong("protocolVersion")
         if (version != VERSION.toLong()) throw ProtocolException("unsupported protocolVersion")
-        val requestId = root.requireString("requestId", MAX_REQUEST_ID_LENGTH)
-        if (!IDENTIFIER.matches(requestId)) throw ProtocolException("invalid requestId")
-        val sessionId = root.requireString("sessionId", MAX_SESSION_ID_LENGTH)
-        if (sessionId.isNotEmpty() && !IDENTIFIER.matches(sessionId)) throw ProtocolException("invalid sessionId")
+        val requestId = requireIdentifier(root, "requestId", MAX_REQUEST_ID_LENGTH)
+        val sessionId = requireIdentifier(root, "sessionId", MAX_SESSION_ID_LENGTH, allowEmpty = true)
         val sequence = root.requireLong("sequence")
         if (sequence <= 0L) throw ProtocolException("sequence must be in 1..Long.MAX_VALUE")
         val type = root.requireString("type", MAX_TYPE_LENGTH)
         if (!TYPE.matches(type)) throw ProtocolException("invalid message type")
         val payload = root.requireObject("payload")
         return ProtocolEnvelope(VERSION, requestId, sessionId, sequence, type, payload)
+    }
+
+    private fun requireIdentifier(
+        objectValue: JsonValue.ObjectValue,
+        field: String,
+        maxLength: Int,
+        allowEmpty: Boolean = false,
+    ): String {
+        val value = objectValue.requireString(field, maxLength)
+        if ((value.isEmpty() && !allowEmpty) || (value.isNotEmpty() && !IDENTIFIER.matches(value))) {
+            throw ProtocolException("invalid $field")
+        }
+        return value
     }
 
     fun encode(envelope: ProtocolEnvelope): ByteArray {

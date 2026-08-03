@@ -10,6 +10,7 @@ const platform = @import("platform.zig");
 const process_supervisor = @import("process_supervisor.zig");
 const adb_devices = @import("device_discovery.zig");
 const scrcpy_manager = @import("scrcpy_manager.zig");
+const transport_protocol = @import("transport_protocol.zig");
 
 extern fn tvrc_windows_companion_path(name: [*:0]const u8, output: [*]u8, capacity: u32, output_len: *u32) callconv(.c) i32;
 
@@ -1215,7 +1216,7 @@ const Handle = struct {
             self.enqueueReserved(.request_complete, request.request_id, requestResult(err), requestErrorPayload(err));
             return;
         };
-        self.control.connect(request.request_id) catch |err| {
+        const credential_migration = self.control.connect(request.request_id) catch |err| {
             self.enqueueReserved(.error_event, request.request_id, requestResult(err), requestErrorPayload(err));
             self.setState(.idle);
             self.enqueueReserved(.state_changed, request.request_id, .ok, "{\"state\":\"idle\"}");
@@ -1234,7 +1235,12 @@ const Handle = struct {
         self.enqueueReserved(.capabilities_changed, request.request_id, .ok, capabilities);
         self.setState(.connected);
         self.enqueueReserved(.state_changed, request.request_id, .ok, "{\"state\":\"connected\"}");
-        self.enqueueReserved(.request_complete, request.request_id, .ok, "{\"status\":\"connected\"}");
+        self.enqueueReserved(
+            .request_complete,
+            request.request_id,
+            .ok,
+            connectionCompletePayload(credential_migration),
+        );
     }
 
     fn processDisconnect(self: *Handle, request: Request) void {
@@ -1332,13 +1338,20 @@ const Handle = struct {
             self.enqueueReserved(.request_complete, request.request_id, .internal_error, "{\"error\":\"media_attach_id_failed\"}");
             return;
         };
-        var frame_buffer: [@import("transport_protocol.zig").max_frame_size + @import("transport_protocol.zig").frame_header_size]u8 = undefined;
-        const frame = control_protocol.encodeFrame(&frame_buffer, attach_id, info.sessionId(), 1, "media_attach", .{
+        var envelope_buffer: [transport_protocol.max_frame_size]u8 = undefined;
+        const envelope = control_protocol.encodeEnvelope(&envelope_buffer, attach_id, info.sessionId(), 1, "media_attach", .{
             .token = &offer.token,
         }) catch {
             self.media_tls.close();
             self.enqueueReserved(.media_state_changed, request.request_id, .internal_error, "{\"state\":\"failed\"}");
             self.enqueueReserved(.request_complete, request.request_id, .internal_error, "{\"error\":\"media_attach_encode_failed\"}");
+            return;
+        };
+        var frame_buffer: [transport_protocol.max_frame_size + transport_protocol.frame_header_size]u8 = undefined;
+        const frame = transport_protocol.encodeFrame(envelope, &frame_buffer) catch {
+            self.media_tls.close();
+            self.enqueueReserved(.media_state_changed, request.request_id, .internal_error, "{\"state\":\"failed\"}");
+            self.enqueueReserved(.request_complete, request.request_id, .internal_error, "{\"error\":\"media_attach_frame_failed\"}");
             return;
         };
         self.media_tls.write(frame) catch |err| {
@@ -1347,7 +1360,7 @@ const Handle = struct {
             self.enqueueReserved(.request_complete, request.request_id, requestResult(err), requestErrorPayload(err));
             return;
         };
-        var decoder = @import("transport_protocol.zig").FrameDecoder{};
+        var decoder = transport_protocol.FrameDecoder{};
         while (decoder.peek() catch null == null) {
             var chunk: [4096]u8 = undefined;
             const count = self.media_tls.read(&chunk) catch |err| {
@@ -2040,6 +2053,21 @@ test "ADB session publication requires a live authenticated startup" {
     try std.testing.expect(!canPublishAdbSession(.connected, .stopping, true, false));
     try std.testing.expect(!canPublishAdbSession(.connected, .adb_starting, false, false));
     try std.testing.expect(!canPublishAdbSession(.connected, .adb_starting, true, true));
+}
+
+fn connectionCompletePayload(outcome: control_client.CredentialMigrationOutcome) []const u8 {
+    return if (outcome == .cleanup_pending)
+        "{\"status\":\"connected\",\"credentialMigration\":\"cleanup_pending\"}"
+    else
+        "{\"status\":\"connected\"}";
+}
+
+test "connection completion exposes pending credential cleanup without failing connection" {
+    try std.testing.expectEqualStrings(
+        "{\"status\":\"connected\",\"credentialMigration\":\"cleanup_pending\"}",
+        connectionCompletePayload(.cleanup_pending),
+    );
+    try std.testing.expectEqualStrings("{\"status\":\"connected\"}", connectionCompletePayload(.completed));
 }
 
 test "C ABI lifecycle is idempotent and caller buffer remains owned" {

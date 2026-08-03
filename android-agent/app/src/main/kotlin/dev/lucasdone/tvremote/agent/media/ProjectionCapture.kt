@@ -15,6 +15,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.PowerManager
 import android.view.Surface
+import android.util.Log
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -292,8 +293,8 @@ class ProjectionCapture(
                 drain == null || drain === Thread.currentThread() || !drain.isAlive
             }
             drain == null -> {
-                runCatching { encoder.stop() }
-                runCatching { encoder.release() }
+                diagnoseCodecOperation("callback stop") { encoder.stop() }
+                diagnoseCodecOperation("callback release") { encoder.release() }
                 true
             }
             else -> legacyEncoderReaper.retire(
@@ -356,6 +357,12 @@ class ProjectionCapture(
         if (Build.VERSION.SDK_INT >= 29 && thermalListenerRegistered && listener != null) {
             runCatching { powerManager.removeThermalStatusListener(listener) }
             thermalListenerRegistered = false
+        }
+    }
+
+    private fun diagnoseCodecOperation(operation: String, action: () -> Unit) {
+        runCatching(action).onFailure {
+            Log.w("TVRC-Encoder", "$operation failed (attempt 1): ${it.javaClass.simpleName}")
         }
     }
 

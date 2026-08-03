@@ -93,9 +93,14 @@ pub const ProcessSupervisor = struct {
         var process_tree = try ProcessTree.attach(&child);
         var running = true;
         defer {
-            if (running) process_tree.terminate();
+            if (running) process_tree.terminate() catch |err| {
+                std.log.warn("process tree termination failed: {s}", .{@errorName(err)});
+            };
             process_tree.deinit();
-            if (running) child.kill(self.io);
+            if (running) {
+                std.log.warn("invoking child kill safety net after incomplete process-tree cleanup", .{});
+                child.kill(self.io);
+            }
         }
 
         try process_tree.resumeChild(&child);
@@ -177,7 +182,10 @@ pub const ProcessSupervisor = struct {
         child.stderr = null;
         diagnostics.stdout_thread = try std.Thread.spawn(.{}, ProcessDiagnostics.drain, .{ diagnostics, stdout_file });
         errdefer {
-            process_tree.terminate();
+            process_tree.terminate() catch |err| {
+                std.log.warn("process tree termination failed during startup rollback: {s}", .{@errorName(err)});
+            };
+            std.log.warn("invoking child kill safety net during startup rollback", .{});
             child.kill(self.io);
             diagnostics.stdout_thread.?.join();
         }
@@ -203,17 +211,14 @@ pub const ManagedProcess = struct {
 
     pub fn deinit(self: *ManagedProcess) void {
         if (!self.active) return;
-        self.process_tree.terminate();
-        // Zig 0.16 的 Child.kill 为 void：底层 childKill 错误在 std.Io 内部被吞
-        // （posix catch {}、Windows 回退 childCleanupWindows），无法直接取得失败值。
-        // 替代检查：kill 前 child.id 为 null 说明进程已由 wait 回收（正常路径）；
-        // kill 后 id 仍非 null 则记录告警。真正负责终止进程树的是
-        // process_tree.terminate()（Job Object / 进程组信号）。
+        self.process_tree.terminate() catch |err| {
+            std.log.warn("managed process tree termination failed: {s}", .{@errorName(err)});
+        };
+        // Zig 0.16 的 Child.kill 返回 void，不能伪造返回值或句柄状态检查。
+        // 真正负责终止完整树的是上面的 Job Object / 进程组操作；这里只是安全网。
         if (self.child.id != null) {
+            std.log.warn("invoking managed child kill safety net", .{});
             self.child.kill(self.io);
-            if (self.child.id != null) {
-                std.log.warn("managed process handle remained after kill", .{});
-            }
         } else {
             std.log.debug("managed process already reaped before deinit", .{});
         }
@@ -329,12 +334,14 @@ const ProcessTree = struct {
         }
     }
 
-    fn terminate(self: *ProcessTree) void {
+    fn terminate(self: *ProcessTree) !void {
         if (builtin.os.tag == .windows) {
-            if (self.identifier) |job| _ = TerminateJobObject(job, 1);
+            if (self.identifier) |job| {
+                if (!TerminateJobObject(job, 1).toBool()) return error.JobObjectTerminationFailed;
+            }
             return;
         }
-        if (self.identifier) |pid| std.posix.kill(-pid, .KILL) catch {};
+        if (self.identifier) |pid| try std.posix.kill(-pid, .KILL);
     }
 
     fn deinit(self: *ProcessTree) void {

@@ -1,5 +1,6 @@
 const std = @import("std");
 const control_protocol = @import("control_protocol.zig");
+const control_channel = @import("control_channel.zig");
 const credential_store = @import("credential_store.zig");
 const security = @import("security_protocol.zig");
 const tls_transport = @import("tls_transport.zig");
@@ -210,6 +211,12 @@ const PairingContext = struct {
     deadline_ms: i64,
 };
 
+pub const CredentialMigrationOutcome = enum {
+    not_needed,
+    completed,
+    cleanup_pending,
+};
+
 pub const Client = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -415,7 +422,7 @@ pub const Client = struct {
         if (!std.mem.eql(u8, completed_id, controller_id)) return error.ProtocolViolation;
     }
 
-    pub fn connect(self: *Client, request_tag: u64) !void {
+    pub fn connect(self: *Client, request_tag: u64) !CredentialMigrationOutcome {
         if (self.connected or self.pairing != null) return error.InvalidState;
         const target = self.target orelse return error.TargetRequired;
         self.resetConnection();
@@ -505,16 +512,17 @@ pub const Client = struct {
         self.last_ping_ms = 0;
         if (used_legacy_credential) {
             // 凭据迁移：先写入基于证书指纹的新凭据，成功后才移除基于
-            // IP 地址的旧凭据。任何一步失败都会使整个 connect 返回错误，
-            // 由函数入口的 errdefer resetConnection 清理连接；旧凭据在
-            // remove 成功前始终保留，不会出现凭据丢失窗口。
+            // IP 地址的旧凭据。稳定 ID 写入失败会使 connect 返回错误；旧 ID
+            // 清理失败只返回 cleanup_pending，连接保持可用且下次继续重试。
             try self.credentials.put(&stable_credential_id, &encoded_credential);
-            self.credentials.remove(&target.credential_id) catch |err| {
-                // remove 失败只影响残留的旧凭据，新凭据已生效，
-                // 不阻断已认证的连接；记录日志便于诊断。
-                std.log.warn("legacy credential cleanup failed: {s}", .{@errorName(err)});
-            };
         }
+
+        return cleanupLegacyCredential(
+            self.credentials,
+            &stable_credential_id,
+            &target.credential_id,
+            used_legacy_credential,
+        );
     }
 
     pub fn poll(self: *Client) !PollResult {
@@ -526,7 +534,7 @@ pub const Client = struct {
                 if (self.last_ping_ms == 0 or now - self.last_ping_ms >= transport.heartbeat_interval_ms) {
                     var id_buffer: [80]u8 = undefined;
                     const request_id = try formatSequenceRequestId(&id_buffer, "heartbeat", self.outbound_sequence + 1);
-                    _ = try self.send(request_id, self.sessionId(), "ping", .{});
+                    _ = try self.send(request_id, self.sessionId(), "ping", struct {}{});
                     self.last_ping_ms = now;
                 }
                 return .no_change;
@@ -538,7 +546,7 @@ pub const Client = struct {
         self.last_received_ms = nowMs(self.io);
         if (std.mem.eql(u8, message.message_type, "ping")) {
             try message.requirePayloadFields(&.{}, &.{});
-            _ = try self.send(message.request_id, self.sessionId(), "pong", .{});
+            _ = try self.send(message.request_id, self.sessionId(), "pong", struct {}{});
             return .no_change;
         }
         if (std.mem.eql(u8, message.message_type, "pong")) {
@@ -591,7 +599,7 @@ pub const Client = struct {
             self.last_received_ms = nowMs(self.io);
             if (std.mem.eql(u8, message.message_type, "ping")) {
                 try message.requirePayloadFields(&.{}, &.{});
-                _ = try self.send(message.request_id, self.sessionId(), "pong", .{});
+                _ = try self.send(message.request_id, self.sessionId(), "pong", struct {}{});
                 continue;
             }
             if (std.mem.eql(u8, message.message_type, "pong")) {
@@ -637,7 +645,7 @@ pub const Client = struct {
             self.capabilities.media_transport == .unverified) return error.MediaUnsupported;
         var request_id_buffer: [64]u8 = undefined;
         const request_id = try formatRequestId(&request_id_buffer, request_tag, "media");
-        _ = try self.send(request_id, self.sessionId(), "media_start", .{});
+        _ = try self.send(request_id, self.sessionId(), "media_start", struct {}{});
         const deadline = nowMs(self.io) + 15_000;
         while (true) {
             var message = try self.readUntil(deadline);
@@ -664,7 +672,7 @@ pub const Client = struct {
         if (!self.connected) return error.InvalidState;
         var request_id_buffer: [64]u8 = undefined;
         const request_id = try formatRequestId(&request_id_buffer, request_tag, "media-stop");
-        _ = try self.send(request_id, self.sessionId(), "media_stop", .{});
+        _ = try self.send(request_id, self.sessionId(), "media_stop", struct {}{});
         const deadline = nowMs(self.io) + 10_000;
         while (true) {
             var message = try self.readUntil(deadline);
@@ -706,7 +714,7 @@ pub const Client = struct {
         defer self.resetConnection();
         var request_id_buffer: [64]u8 = undefined;
         const request_id = try formatRequestId(&request_id_buffer, request_tag, null);
-        _ = try self.send(request_id, self.sessionId(), "disconnect", .{});
+        _ = try self.send(request_id, self.sessionId(), "disconnect", struct {}{});
         const deadline = nowMs(self.io) + disconnect_deadline_ms;
         while (true) {
             var message = try self.readUntil(deadline);
@@ -714,7 +722,7 @@ pub const Client = struct {
             try self.validateControlEnvelope(&message);
             if (std.mem.eql(u8, message.message_type, "ping")) {
                 try message.requirePayloadFields(&.{}, &.{});
-                _ = try self.send(message.request_id, self.sessionId(), "pong", .{});
+                _ = try self.send(message.request_id, self.sessionId(), "pong", struct {}{});
                 continue;
             }
             if (std.mem.eql(u8, message.message_type, "disconnect_ack") and std.mem.eql(u8, message.request_id, request_id)) {
@@ -755,13 +763,18 @@ pub const Client = struct {
     fn send(self: *Client, request_id: []const u8, session_id: []const u8, message_type: []const u8, payload: anytype) !u64 {
         if (self.outbound_sequence >= std.math.maxInt(i64)) return error.SequenceExhausted;
         const sequence = self.outbound_sequence + 1;
-        var output: [transport.max_frame_size + transport.frame_header_size]u8 = undefined;
-        const frame = try control_protocol.encodeFrame(&output, request_id, session_id, sequence, message_type, payload);
-        if (self.tls.state == .encrypted_unverified) {
-            try self.tls.pairingWrite(frame);
-        } else {
-            try self.tls.write(frame);
-        }
+        var envelope_buffer: [transport.max_frame_size]u8 = undefined;
+        const envelope = try control_protocol.encodeEnvelope(
+            &envelope_buffer,
+            request_id,
+            session_id,
+            sequence,
+            message_type,
+            payload,
+        );
+        var frame_buffer: [transport.max_frame_size + transport.frame_header_size]u8 = undefined;
+        const frame = try transport.encodeFrame(envelope, &frame_buffer);
+        try control_channel.forTls(&self.tls, self.tls.state == .encrypted_unverified).write(frame);
         self.outbound_sequence = sequence;
         return sequence;
     }
@@ -769,10 +782,10 @@ pub const Client = struct {
     fn readMessage(self: *Client) !control_protocol.Decoded {
         while (try self.decoder.peek() == null) {
             var buffer: [4096]u8 = undefined;
-            const count = if (self.tls.state == .encrypted_unverified)
-                try self.tls.pairingRead(&buffer)
-            else
-                try self.tls.read(&buffer);
+            const count = try control_channel.forTls(
+                &self.tls,
+                self.tls.state == .encrypted_unverified,
+            ).read(&buffer);
             try self.decoder.append(buffer[0..count]);
         }
         const payload = (try self.decoder.peek()).?;
@@ -811,7 +824,7 @@ pub const Client = struct {
     fn handleInterleaved(self: *Client, message: *const control_protocol.Decoded) !bool {
         if (std.mem.eql(u8, message.message_type, "ping")) {
             try message.requirePayloadFields(&.{}, &.{});
-            _ = try self.send(message.request_id, self.sessionId(), "pong", .{});
+            _ = try self.send(message.request_id, self.sessionId(), "pong", struct {}{});
             return true;
         }
         if (std.mem.eql(u8, message.message_type, "pong")) {
@@ -837,6 +850,39 @@ pub const Client = struct {
         self.media_state_len = @intCast(state.len);
     }
 };
+
+fn cleanupLegacyCredential(
+    credentials: credential_store.Adapter,
+    stable_id: []const u8,
+    legacy_id: []const u8,
+    legacy_loaded: bool,
+) CredentialMigrationOutcome {
+    if (std.mem.eql(u8, stable_id, legacy_id)) return if (legacy_loaded) .completed else .not_needed;
+    var legacy_probe: [credential_record_length]u8 = undefined;
+    defer std.crypto.secureZero(u8, &legacy_probe);
+    const legacy_present = if (legacy_loaded)
+        true
+    else blk: {
+        const legacy_len = credentials.get(legacy_id, &legacy_probe) catch |err| switch (err) {
+            error.CredentialNotFound => break :blk false,
+            else => {
+                std.log.warn("legacy credential cleanup probe failed: {s}", .{@errorName(err)});
+                return .cleanup_pending;
+            },
+        };
+        if (legacy_len != credential_record_length) {
+            std.log.warn("legacy credential cleanup probe returned invalid record length", .{});
+            return .cleanup_pending;
+        }
+        break :blk true;
+    };
+    if (!legacy_present) return .not_needed;
+    credentials.remove(legacy_id) catch |err| {
+        std.log.warn("legacy credential cleanup failed: {s}", .{@errorName(err)});
+        return .cleanup_pending;
+    };
+    return .completed;
+}
 
 fn parseTarget(value: []const u8) !Target {
     if (value.len == 0 or value.len > 270 or !std.unicode.utf8ValidateSlice(value)) return error.InvalidTarget;
@@ -1024,6 +1070,72 @@ test "credential record is fixed width strict and round trips" {
     try std.testing.expectEqualSlices(u8, &credential.secret, &decoded.secret);
     encoded[0] ^= 1;
     try std.testing.expectError(error.InvalidCredentialData, decodeCredential(&encoded));
+}
+
+const CleanupTestStore = struct {
+    record: [credential_record_length]u8 = @splat(0x5a),
+    legacy_present: bool = true,
+    removal_failures: u8 = 1,
+    remove_calls: u8 = 0,
+};
+
+fn cleanupTestPut(_: ?*anyopaque, _: ?[*]const u8, _: u32, _: ?[*]const u8, _: u32) callconv(.c) i32 {
+    return 0;
+}
+
+fn cleanupTestGet(
+    context: ?*anyopaque,
+    _: ?[*]const u8,
+    _: u32,
+    output: ?[*]u8,
+    capacity: u32,
+    output_len: ?*u32,
+) callconv(.c) i32 {
+    const store: *CleanupTestStore = @ptrCast(@alignCast(context.?));
+    if (!store.legacy_present) return 6;
+    output_len.?.* = credential_record_length;
+    if (capacity < credential_record_length) return 4;
+    @memcpy(output.?[0..credential_record_length], &store.record);
+    return 0;
+}
+
+fn cleanupTestRemove(context: ?*anyopaque, _: ?[*]const u8, _: u32) callconv(.c) i32 {
+    const store: *CleanupTestStore = @ptrCast(@alignCast(context.?));
+    store.remove_calls += 1;
+    if (store.removal_failures > 0) {
+        store.removal_failures -= 1;
+        return 5;
+    }
+    store.legacy_present = false;
+    return 0;
+}
+
+test "legacy credential cleanup failure is visible and retried on the next connection" {
+    var store = CleanupTestStore{};
+    const credentials = credential_store.Adapter{
+        .context = &store,
+        .put_fn = cleanupTestPut,
+        .get_fn = cleanupTestGet,
+        .remove_fn = cleanupTestRemove,
+    };
+    const stable_id = [_]u8{0x11} ** 32;
+    const legacy_id = [_]u8{0x22} ** 32;
+    try std.testing.expectEqual(
+        CredentialMigrationOutcome.cleanup_pending,
+        cleanupLegacyCredential(credentials, &stable_id, &legacy_id, false),
+    );
+    try std.testing.expect(store.legacy_present);
+    try std.testing.expectEqual(@as(u8, 1), store.remove_calls);
+    try std.testing.expectEqual(
+        CredentialMigrationOutcome.completed,
+        cleanupLegacyCredential(credentials, &stable_id, &legacy_id, false),
+    );
+    try std.testing.expect(!store.legacy_present);
+    try std.testing.expectEqual(@as(u8, 2), store.remove_calls);
+    try std.testing.expectEqual(
+        CredentialMigrationOutcome.not_needed,
+        cleanupLegacyCredential(credentials, &stable_id, &legacy_id, false),
+    );
 }
 
 test "capabilities enable only supported and best effort keys" {

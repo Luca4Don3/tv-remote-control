@@ -77,6 +77,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resourc
     zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos.13.0 --prefix "$mac_build")
 CLANG_MODULE_CACHE_PATH="$controller_dir/.temp/swift-module-cache" \
     xcrun swiftc -swift-version 6 -parse-as-library -target arm64-apple-macos13.0 \
+    "$project_root/macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift" \
     "$project_root/macos-controller/Sources/"*.swift \
     -L "$mac_build/lib" -ltv_remote_core \
     -import-objc-header "$controller_dir/include/tv_remote_core.h" \

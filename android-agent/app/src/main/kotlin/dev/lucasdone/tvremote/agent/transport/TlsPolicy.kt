@@ -33,6 +33,17 @@ object TlsPolicy {
         return supported.filter { it == FALLBACK_CBC_CIPHER }
     }
 
+    internal fun selectProtocols(supported: Collection<String>): List<String> {
+        val protocols = supported.filter { it in ALLOWED_PROTOCOLS }
+        if ("TLSv1.2" !in protocols) throw IllegalStateException("TLS 1.2 is unavailable")
+        return protocols
+    }
+
+    internal fun requireApprovedCiphers(supported: Collection<String>, sdkInt: Int): List<String> =
+        selectCiphers(supported, sdkInt).also {
+            if (it.isEmpty()) throw IllegalStateException("no approved TLS cipher is available")
+        }
+
     fun probe(sdkInt: Int = Build.VERSION.SDK_INT): Probe = try {
         val parameters = SSLContext.getInstance("TLS").apply { init(null, null, null) }.supportedSSLParameters
         Probe(
@@ -45,10 +56,8 @@ object TlsPolicy {
     }
 
     fun configure(serverSocket: SSLServerSocket, sdkInt: Int = Build.VERSION.SDK_INT) {
-        val protocols = serverSocket.supportedProtocols.filter { it in ALLOWED_PROTOCOLS }
-        if ("TLSv1.2" !in protocols) throw IllegalStateException("TLS 1.2 is unavailable")
-        val ciphers = selectCiphers(serverSocket.supportedCipherSuites.toList(), sdkInt)
-        if (ciphers.isEmpty()) throw IllegalStateException("no approved TLS cipher is available")
+        val protocols = selectProtocols(serverSocket.supportedProtocols.toList())
+        val ciphers = requireApprovedCiphers(serverSocket.supportedCipherSuites.toList(), sdkInt)
         serverSocket.enabledProtocols = protocols.toTypedArray()
         serverSocket.enabledCipherSuites = ciphers.toTypedArray()
         serverSocket.needClientAuth = false
@@ -57,10 +66,8 @@ object TlsPolicy {
 
     fun configure(socket: Socket, sdkInt: Int = Build.VERSION.SDK_INT): SSLSocket {
         val tlsSocket = socket as? SSLSocket ?: throw IllegalArgumentException("socket is not TLS")
-        val protocols = tlsSocket.supportedProtocols.filter { it in ALLOWED_PROTOCOLS }
-        if ("TLSv1.2" !in protocols) throw IllegalStateException("TLS 1.2 is unavailable")
-        val ciphers = selectCiphers(tlsSocket.supportedCipherSuites.toList(), sdkInt)
-        if (ciphers.isEmpty()) throw IllegalStateException("no approved TLS cipher is available")
+        val protocols = selectProtocols(tlsSocket.supportedProtocols.toList())
+        val ciphers = requireApprovedCiphers(tlsSocket.supportedCipherSuites.toList(), sdkInt)
         tlsSocket.enabledProtocols = protocols.toTypedArray()
         tlsSocket.enabledCipherSuites = ciphers.toTypedArray()
         tlsSocket.useClientMode = false

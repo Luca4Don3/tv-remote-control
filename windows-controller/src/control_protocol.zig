@@ -95,7 +95,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !Decoded {
     };
 }
 
-pub fn encodeFrame(
+pub fn encodeEnvelope(
     output: []u8,
     request_id: []const u8,
     session_id: []const u8,
@@ -103,13 +103,13 @@ pub fn encodeFrame(
     message_type: []const u8,
     payload_value: anytype,
 ) ![]const u8 {
-    if (output.len < transport.frame_header_size + 1) return error.BufferTooSmall;
+    if (output.len < 1) return error.BufferTooSmall;
     if (!validIdentifier(request_id, false) or !validIdentifier(session_id, true) or
         sequence == 0 or sequence > std.math.maxInt(i64) or !validType(message_type))
     {
         return error.InvalidEnvelope;
     }
-    var writer: std.Io.Writer = .fixed(output[transport.frame_header_size..]);
+    var writer: std.Io.Writer = .fixed(output);
     std.json.Stringify.value(.{
         .protocolVersion = protocol_version,
         .requestId = request_id,
@@ -122,8 +122,7 @@ pub fn encodeFrame(
     // payload_len == 0 表示空帧（编码异常），与超长帧区分开。
     if (payload_len == 0) return error.EmptyFrame;
     if (payload_len > transport.max_frame_size) return error.FrameTooLarge;
-    std.mem.writeInt(u32, output[0..transport.frame_header_size], @intCast(payload_len), .big);
-    return output[0 .. payload_len + transport.frame_header_size];
+    return output[0..payload_len];
 }
 
 pub fn requireObjectString(object: std.json.ObjectMap, field: []const u8, max_len: usize) ![]const u8 {
@@ -189,13 +188,15 @@ fn countPresentOptional(object: std.json.ObjectMap, optional: []const []const u8
 }
 
 test "control envelope round trips with strict Android field names" {
-    var buffer: [1024]u8 = undefined;
-    const encoded = try encodeFrame(&buffer, "client-1", "", 1, "pair_request", .{
+    var envelope_buffer: [1024]u8 = undefined;
+    const envelope = try encodeEnvelope(&envelope_buffer, "client-1", "", 1, "pair_request", .{
         .code = "123456",
         .controllerName = "Windows Controller",
         .controllerNonce = "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
     });
-    const payload = try transport.decodeFrame(encoded);
+    var frame_buffer: [1028]u8 = undefined;
+    const frame = try transport.encodeFrame(envelope, &frame_buffer);
+    const payload = try transport.decodeFrame(frame);
     var decoded = try decode(std.testing.allocator, payload);
     defer decoded.deinit();
     try std.testing.expectEqualStrings("client-1", decoded.request_id);
@@ -214,4 +215,12 @@ test "control envelope rejects replay-shaped and ambiguous JSON" {
     const invalid_id =
         "{\"protocolVersion\":1,\"requestId\":\"bad id\",\"sessionId\":\"\",\"sequence\":1,\"type\":\"ping\",\"payload\":{}}";
     try std.testing.expectError(error.ProtocolViolation, decode(std.testing.allocator, invalid_id));
+}
+
+test "empty control payload encodes as an object rather than a tuple array" {
+    var buffer: [512]u8 = undefined;
+    const envelope = try encodeEnvelope(&buffer, "ping-1", "session-1", 1, "ping", struct {}{});
+    var decoded = try decode(std.testing.allocator, envelope);
+    defer decoded.deinit();
+    try decoded.requirePayloadFields(&.{}, &.{});
 }

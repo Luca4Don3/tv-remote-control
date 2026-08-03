@@ -25,7 +25,10 @@ class QualityReductionController(
     }
 
     @Synchronized
-    fun onThermalStatus(status: Int): Boolean = requestWhen(status >= THERMAL_STATUS_SEVERE)
+    fun onThermalStatus(status: Int): Boolean {
+        if (state != State.DEFAULT) return false
+        return requestWhen(status >= THERMAL_STATUS_SEVERE)
+    }
 
     @Synchronized
     fun markReduced(): Boolean {

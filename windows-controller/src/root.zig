@@ -3,6 +3,7 @@ pub const abi = @import("abi.zig");
 pub const backend = @import("backend.zig");
 pub const credential_store = @import("credential_store.zig");
 pub const control_protocol = @import("control_protocol.zig");
+pub const control_channel = @import("control_channel.zig");
 pub const control_client = @import("control_client.zig");
 pub const device_discovery = @import("device_discovery.zig");
 pub const install = @import("install.zig");
@@ -23,6 +24,7 @@ test {
     _ = backend;
     _ = credential_store;
     _ = control_protocol;
+    _ = control_channel;
     _ = control_client;
     _ = device_discovery;
     _ = install;

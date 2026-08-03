@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Read-only validation of the dependency lock and release inputs.
 
-锁定值如何更新（依赖升级时必须同步修改四处）：
+锁定值如何更新（依赖升级时必须同步修改五处）：
 1. dependencies.lock.json —— 新增/升级依赖时更新 version、url、size、sha256 等字段；
-2. 本文件下方硬编码的版本/SHA 断言（Gradle 9.6.1、mbedTLS 3.6.7、scrcpy 4.1、Platform Tools 37.0.1）
+2. 本文件下方硬编码的版本/SHA 断言（Zig 0.16.0、Gradle 9.6.1、mbedTLS 3.6.7、scrcpy 4.1、Platform Tools 37.0.1）
    与锁文件逐字段比对，任何一处不一致都会导致发布失败；
 3. windows-controller/vendor/ 下实际 vendor 文件（由 scripts/fetch-locked-dependencies.sh 拉取，
    本文件会对 scrcpy server/LICENSE 再次做 size+SHA-256 校验）；
@@ -61,8 +61,17 @@ def main() -> None:
         fail("unsupported lock schema")
     dependencies = exact_keys(
         root["dependencies"],
-        {"gradle", "mbedtls", "scrcpyServer", "androidPlatformToolsWindows", "minicap"},
+        {"zig", "gradle", "mbedtls", "scrcpyServer", "androidPlatformToolsWindows", "minicap"},
         "dependencies",
+    )
+    zig = exact_keys(
+        dependencies["zig"],
+        {
+            "version", "linuxX86_64Url", "linuxX86_64Sha256",
+            "macosX86_64Url", "macosX86_64Sha256",
+            "macosAarch64Url", "macosAarch64Sha256", "license",
+        },
+        "zig",
     )
     gradle = exact_keys(
         dependencies["gradle"],
@@ -87,6 +96,17 @@ def main() -> None:
     minicap = exact_keys(dependencies["minicap"], {"state", "artifacts"}, "minicap")
     policy = exact_keys(root["downloadPolicy"], {"allowedHosts", "cacheDirectory", "allowPreview"}, "downloadPolicy")
 
+    if zig != {
+        "version": "0.16.0",
+        "linuxX86_64Url": "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz",
+        "linuxX86_64Sha256": "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00",
+        "macosX86_64Url": "https://ziglang.org/download/0.16.0/zig-x86_64-macos-0.16.0.tar.xz",
+        "macosX86_64Sha256": "0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7",
+        "macosAarch64Url": "https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz",
+        "macosAarch64Sha256": "b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489",
+        "license": "MIT",
+    }:
+        fail("Zig lock does not match the approved CI toolchain")
     if gradle != {
         "version": "9.6.1",
         "distributionUrl": "https://services.gradle.org/distributions/gradle-9.6.1-bin.zip",
@@ -104,7 +124,7 @@ def main() -> None:
     if minicap != {"state": "disabled_no_verified_device_profile", "artifacts": []}:
         fail("minicap must remain disabled without a verified device profile")
     if policy != {
-        "allowedHosts": ["github.com", "dl.google.com", "services.gradle.org"],
+        "allowedHosts": ["github.com", "dl.google.com", "services.gradle.org", "ziglang.org"],
         "cacheDirectory": ".temp/dependencies",
         "allowPreview": False,
     }:
