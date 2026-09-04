@@ -77,23 +77,34 @@ class TvAccessibilityService : AccessibilityService() {
     fun performText(command: TextCommand): Boolean {
         if (Build.VERSION.SDK_INT < 21) return false
         val root = rootInActiveWindow ?: return false
-        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            ?: root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
-            ?: run { recycle(root); return false }
-        val target = sequenceOf(focused)
-            .plus(generateSequence(focused) { it.parent }.take(4).toList())
-            .firstOrNull { node -> node.isEditable } ?: run {
-            recycle(focused, root)
-            return false
-        }
-        val arguments = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, command.text)
-        }
-        return try {
-            target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) &&
+        val chain = mutableListOf(root)
+        try {
+            var current = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                ?: root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+                ?: return false
+            chain += current
+            var target: AccessibilityNodeInfo? = if (current.isEditable) current else null
+            if (target == null) {
+                var parent = current.parent
+                repeat(4) {
+                    val node = parent ?: return@repeat
+                    chain += node
+                    if (node.isEditable) {
+                        target = node
+                        parent = null
+                    } else {
+                        parent = node.parent
+                    }
+                }
+            }
+            val editable = target ?: return false
+            val arguments = Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, command.text)
+            }
+            return editable.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) &&
                 command.action == TextAction.COMMIT
         } finally {
-            recycle(target, focused, root)
+            recycle(*chain.distinctBy(System::identityHashCode).toTypedArray())
         }
     }
 

@@ -39,17 +39,15 @@ class PairingTokenTest {
     }
 
     @Test
-    fun tokenAfterConsumptionRejected() {
-        var clock = 0L
-        val manager = PairingManager(nowMs = { clock })
-        val window = manager.openWindow()
-        assertTrue(manager.submitWithToken(window.qrToken, "Phone", nonce(), fingerprint()) is PairingSubmission.AwaitingTvConfirmation)
-        manager.confirm(manager.currentWindow()?.let { null } ?: return, true)
-        // 重开窗口后旧 token 不可用
-        clock += 1000
-        val newWindow = manager.openWindow()
-        assertNotEquals(window.qrToken, newWindow.qrToken)
-        assertTrue(manager.submitWithToken(window.qrToken, "Phone3", nonce(), fingerprint()) is PairingSubmission.Rejected)
+    fun newWindowIssuesNewToken() {
+        val manager = PairingManager()
+        val first = manager.openWindow()
+        assertTrue(manager.submitWithToken(first.qrToken, "Phone", nonce(), fingerprint()) is PairingSubmission.AwaitingTvConfirmation)
+        // 开新窗口后旧 token 不再有效，新窗口 token 不同
+        val second = manager.openWindow()
+        assertTrue(second.qrToken != first.qrToken)
+        assertTrue(manager.submitWithToken(first.qrToken, "Phone2", nonce(), fingerprint()) is PairingSubmission.Rejected)
+        assertTrue(manager.submitWithToken(second.qrToken, "Phone3", nonce(), fingerprint()) is PairingSubmission.AwaitingTvConfirmation)
     }
 
     @Test

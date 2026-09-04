@@ -27,4 +27,4 @@ The project will acknowledge a report when it has been reviewed and will coordin
 - 主通道（TCP+TLS 47832）仍是唯一受支持的正式遥控路径；WS 通道仅供开发调试（例如小程序开发版），
   生产环境使用应在文档与 UI 中显式提示降级边界。
 
-未验证项：WS 通道在弱网与高频输入下的抗重放窗口行为（`UNVERIFIED`，待真机证据）。
+实现边界说明：WS 升级握手不校验 `Host`/`Origin` 头（浏览器侧伪造 Origin 无法获得内容，所有遥控消息均需配对派生密钥的 AES-GCM 密文；明文握手仅暴露连接建立事件）。未验证项：WS 通道在弱网与高频输入下的抗重放窗口行为（`UNVERIFIED`，待真机证据）。

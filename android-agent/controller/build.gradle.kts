@@ -3,6 +3,15 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.2.20"
 }
 
+val productVersion = rootProject.file("../VERSION").readText().trim().also {
+    require(Regex("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$|^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-rc[1-9][0-9]*$").matches(it)) {
+        "VERSION must use major.minor.patch or major.minor-rcN"
+    }
+}
+val stableVersionParts = productVersion.substringBefore('-').split('.').map(String::toInt)
+val productVersionCode = stableVersionParts[0] * 1_000_000 + stableVersionParts[1] * 1_000 +
+    (stableVersionParts.getOrNull(2) ?: productVersion.substringAfter("-rc", "0").toInt())
+
 android {
     namespace = "dev.lucasdone.tvremote.controller"
     compileSdk = 36
@@ -11,8 +20,8 @@ android {
         applicationId = "dev.lucasdone.tvremote.controller"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = productVersionCode
+        versionName = productVersion
     }
 
     buildFeatures {
