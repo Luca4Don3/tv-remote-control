@@ -3,7 +3,7 @@
 //! 仅支持 agent 调试通道所需：文本/二进制帧、分片续帧、ping/pong、close。
 //! 服务端不掩码出向；入向必须带客户端掩码（协议要求）。
 
-use std::io::{Read, Write};
+use std::io::Write;
 
 pub const OPCODE_CONT: u8 = 0x0;
 pub const OPCODE_TEXT: u8 = 0x1;

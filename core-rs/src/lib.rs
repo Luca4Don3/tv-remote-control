@@ -6,6 +6,7 @@
 pub mod crypto;
 pub mod envelope;
 pub mod replay;
+pub mod ffi;
 pub mod ws;
 pub mod json;
 pub mod frame;
@@ -14,3 +15,5 @@ pub mod pairing;
 pub use frame::{write_frame, read_frame, Frame, FrameDecoder, FrameError, FrameDecodeError, MAGIC, MAX_FRAME_SIZE};
 pub use crypto::{CryptoError, DirectionCipher, SessionKeys};
 pub use envelope::{Envelope, ProtocolError, VERSION};
+
+uniffi::setup_scaffolding!("tvremote_core");

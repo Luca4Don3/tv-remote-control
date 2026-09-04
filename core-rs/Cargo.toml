@@ -6,6 +6,9 @@ rust-version = "1.85"
 description = "TV Remote core protocol: framing, crypto, pairing"
 license = "Apache-2.0"
 
+[lib]
+crate-type = ["cdylib", "lib"]
+
 [dependencies]
 aes-gcm = "0.10"
 hkdf = "0.12"
@@ -14,6 +17,7 @@ rand = "0.8"
 subtle = "2"
 zeroize = "1"
 thiserror = "2"
+uniffi = { version = "0.32", features = ["cli"] }
 
 [dev-dependencies]
 hex = "0.4"
