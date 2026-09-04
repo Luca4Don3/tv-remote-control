@@ -14,6 +14,9 @@ data class PairingUiState(
     val pairingId: String? = null,
     val controllerName: String? = null,
     val sas: String? = null,
+    /** 扫码配对一次性 token（与 QR 同生命周期 60s）。 */
+    val qrToken: String? = null,
+    val qrTokenExpiresAtMs: Long = 0,
 )
 
 data class AgentUiSnapshot(
@@ -55,6 +58,8 @@ object AgentStatusRegistry {
             pairing = PairingUiState(
                 code = window.code,
                 expiresAtMs = window.expiresAtMs,
+                qrToken = window.qrToken,
+                qrTokenExpiresAtMs = window.qrTokenExpiresAtMs,
             ),
         )
     }

@@ -327,11 +327,21 @@ class ControlServer(
     }
 
     private fun handlePairing(connection: Connection, request: ProtocolEnvelope) {
-        requireFields(request.payload, setOf("code", "controllerName", "controllerNonce"))
-        val code = request.payload.requireString("code", 6)
+        // 二选一：传统 6 位码，或扫码配对的一次性 qrToken
+        requireFields(request.payload, setOf("controllerName", "controllerNonce"), setOf("code", "token"))
+        val codeField = request.payload.optionalString("code", 6)
+        val tokenField = request.payload.optionalString("token", 64)
+        if ((codeField == null) == (tokenField == null)) {
+            throw ProtocolException("pair_request requires exactly one of code or token")
+        }
         val controllerName = request.payload.requireString("controllerName", 64)
         val controllerNonce = Hex.decode(request.payload.requireString("controllerNonce", 64), expectedBytes = 32)
-        when (val submission = pairingManager.submit(code, controllerName, controllerNonce, identity.certificateFingerprint)) {
+        val submission = if (tokenField != null) {
+            pairingManager.submitWithToken(tokenField, controllerName, controllerNonce, identity.certificateFingerprint)
+        } else {
+            pairingManager.submit(codeField!!, controllerName, controllerNonce, identity.certificateFingerprint)
+        }
+        when (submission) {
             is PairingSubmission.Rejected -> {
                 sendError(connection, request, "PAIRING_REJECTED", "pairing rejected")
                 return

@@ -9,6 +9,9 @@ data class PairingWindow(
     val code: String,
     val tvNonce: ByteArray,
     val expiresAtMs: Long,
+    /** 扫码配对一次性 token（32B hex），替代手输 6 位码；SAS 核对不受影响。 */
+    val qrToken: String,
+    val qrTokenExpiresAtMs: Long,
 )
 
 data class PairingSas(
@@ -48,6 +51,7 @@ class PairingManager(
         var sas: PairingSas? = null,
         var decision: PairingDecision? = null,
         val decisionReady: CountDownLatch = CountDownLatch(1),
+        var qrTokenConsumed: Boolean = false,
     )
 
     private var pending: Pending? = null
@@ -55,10 +59,13 @@ class PairingManager(
     @Synchronized
     fun openWindow(): PairingWindow {
         pending?.let { close(it, "pairing replaced by a new local window") }
+        val expiresAtMs = nowMs() + PAIRING_TTL_MS
         val window = PairingWindow(
             code = random.nextInt(1_000_000).toString().padStart(6, '0'),
             tvNonce = randomBytes(NONCE_BYTES),
-            expiresAtMs = nowMs() + PAIRING_TTL_MS,
+            expiresAtMs = expiresAtMs,
+            qrToken = Hex.encode(randomBytes(NONCE_BYTES)),
+            qrTokenExpiresAtMs = minOf(expiresAtMs, nowMs() + QR_TOKEN_TTL_MS),
         )
         pending = Pending(window)
         return window.copy(tvNonce = window.tvNonce.copyOf())
@@ -78,6 +85,42 @@ class PairingManager(
             if (current.failedAttempts >= MAX_FAILED_ATTEMPTS) close(current, "too many failed attempts")
             return PairingSubmission.Rejected("pairing rejected")
         }
+        return beginPairing(current, controllerName, controllerNonce, certificateFingerprint)
+    }
+
+    /**
+     * 扫码配对：一次性 token 替代 6 位码输入（token 只出现在电视屏幕二维码中，
+     * 视为“在电视机前”的证明）；SAS 双端核对流程不受影响。
+     */
+    @Synchronized
+    fun submitWithToken(
+        token: String,
+        controllerName: String,
+        controllerNonce: ByteArray,
+        certificateFingerprint: ByteArray,
+    ): PairingSubmission {
+        val current = activePending() ?: return PairingSubmission.Rejected("pairing unavailable")
+        if (current.sas != null) return PairingSubmission.Rejected("pairing already awaiting confirmation")
+        if (current.qrTokenConsumed) return PairingSubmission.Rejected("pairing token already consumed")
+        val tokenValid = token.length == QR_TOKEN_HEX_LENGTH &&
+            token.all { it.isDigit() || it in 'a'..'f' } &&
+            token == current.window.qrToken &&
+            nowMs() < current.window.qrTokenExpiresAtMs
+        if (!tokenValid) {
+            current.failedAttempts += 1
+            if (current.failedAttempts >= MAX_FAILED_ATTEMPTS) close(current, "too many failed attempts")
+            return PairingSubmission.Rejected("pairing rejected")
+        }
+        current.qrTokenConsumed = true
+        return beginPairing(current, controllerName, controllerNonce, certificateFingerprint)
+    }
+
+    private fun beginPairing(
+        current: Pending,
+        controllerName: String,
+        controllerNonce: ByteArray,
+        certificateFingerprint: ByteArray,
+    ): PairingSubmission {
         if (!validControllerName(controllerName)) return PairingSubmission.Rejected("invalid controller name")
         if (controllerNonce.size != NONCE_BYTES) return PairingSubmission.Rejected("invalid controller nonce")
         if (certificateFingerprint.size != FINGERPRINT_BYTES) return PairingSubmission.Rejected("invalid certificate fingerprint")
@@ -198,6 +241,8 @@ class PairingManager(
 
     companion object {
         const val PAIRING_TTL_MS = 120_000L
+        const val QR_TOKEN_TTL_MS = 60_000L
+        private const val QR_TOKEN_HEX_LENGTH = 64
         private const val MAX_CONTROLLER_NAME_CHARS = 64
         private const val MAX_CONTROLLER_NAME_BYTES = 128
         private const val MAX_FAILED_ATTEMPTS = 5
