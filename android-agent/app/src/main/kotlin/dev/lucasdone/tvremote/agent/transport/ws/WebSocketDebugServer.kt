@@ -117,12 +117,15 @@ class WebSocketDebugServer(
     }
 
     private fun handleConnection(socket: Socket) {
+        // dispatcher 提升作用域：断连时无论走到哪一步都要释放按住的键（对齐 TLS 服务端语义）
+        var dispatcher: CommandDispatcher? = null
         try {
             val upgraded = handshake(socket) ?: return
             socket.soTimeout = PRE_AUTH_TIMEOUT_MS
             val session = runDebugHandshake(upgraded) ?: return
             socket.soTimeout = HEARTBEAT_TIMEOUT_MS.toInt()
-            runControlLoop(upgraded, session)
+            dispatcher = dispatcherFactory()
+            runControlLoop(upgraded, session, dispatcher)
         } catch (_: WsFrameCodec.ClosedException) {
             Unit
         } catch (_: SocketTimeoutException) {
@@ -137,6 +140,7 @@ class WebSocketDebugServer(
             Log.e(TAG, "WebSocket debug connection failed: ${error.javaClass.simpleName}")
         } finally {
             openSockets.remove(socket)
+            dispatcher?.disconnect()
             runCatching { socket.close() }
         }
     }
@@ -215,8 +219,7 @@ class WebSocketDebugServer(
         )
     }
 
-    private fun runControlLoop(socket: Socket, session: DebugSession) {
-        val dispatcher = dispatcherFactory()
+    private fun runControlLoop(socket: Socket, session: DebugSession, dispatcher: CommandDispatcher) {
         val textDispatcher = textDispatcherFactory()
         val limiter = RateLimiter()
         var lastPingAtMs = elapsedMs()

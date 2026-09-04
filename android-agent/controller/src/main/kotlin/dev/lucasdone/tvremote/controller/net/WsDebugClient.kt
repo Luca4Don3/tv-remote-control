@@ -38,6 +38,10 @@ class WsDebugClient(
     private var clientCipher: DebugSessionCrypto.DirectionCipher? = null
     private var serverCounter = 0L
     private var outboundSequence = 0L
+    private val writeLock = Any()
+    private val heartbeat = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "tvrc-ws-heartbeat").apply { isDaemon = true }
+    }
 
     init {
         socket.tcpNoDelay = true
@@ -66,6 +70,14 @@ class WsDebugClient(
         val keys = DebugSessionCrypto.deriveSessionKeys(secret, clientRandom, serverRandom)
         clientCipher = DebugSessionCrypto.DirectionCipher(keys.clientToServer)
         serverCipher = DebugSessionCrypto.DirectionCipher(keys.serverToClient)
+        // 15s 加密心跳：agent 端读超时 45s，闲置也会保持链路活跃
+        heartbeat.scheduleWithFixedDelay({
+            try {
+                sendCommand("ping", jsonObject())
+            } catch (_: Exception) {
+                runCatching { close() }
+            }
+        }, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     fun sendKeyEvent(key: String, state: String, repeatCount: Int = 0): Boolean {
@@ -96,10 +108,12 @@ class WsDebugClient(
                 payload = payload,
             ),
         )
-        val cipher = clientCipher ?: throw IllegalStateException("not ready")
-        val counter = outboundSequence
-        val sealed = cipher.seal(message, aad(counter))
-        outboundSequence += 1
+        val sealed = synchronized(writeLock) {
+            val cipher = clientCipher ?: throw IllegalStateException("not ready")
+            val counter = outboundSequence
+            outboundSequence += 1
+            cipher.seal(message, aad(counter))
+        }
         WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_BINARY, sealed)
         while (true) {
             val frame = WsFrameCodec.read(socket.inputStream) ?: throw IOException("connection closed")
@@ -151,6 +165,7 @@ class WsDebugClient(
         ByteArray(8).also { buf -> for (i in 0 until 8) buf[i] = (counter ushr ((7 - i) * 8)).toByte() }
 
     override fun close() {
+        heartbeat.shutdownNow()
         runCatching { socket.close() }
     }
 
@@ -161,6 +176,7 @@ class WsDebugClient(
     companion object {
         const val DEBUG_PORT = 47833
         private const val CONNECT_TIMEOUT_MS = 10_000
+        private const val HEARTBEAT_INTERVAL_MS = 15_000L
         private const val READ_TIMEOUT_MS = 45_000
 
         fun sha1Base64(data: ByteArray): String =
