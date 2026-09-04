@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import dev.lucasdone.tvremote.controller.auth.ControllerCredentialStore
 import dev.lucasdone.tvremote.controller.net.DiscoveryClient
 import dev.lucasdone.tvremote.controller.net.TvConnection
+import dev.lucasdone.tvremote.controller.net.WsDebugClient
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 
@@ -44,6 +45,7 @@ class MainActivity : ComponentActivity() {
     }
     private var connection: TvConnection? = null
     private var session: ControllerSession? = null
+    private var wsClient: WsDebugClient? = null
     private var credentialStore: ControllerCredentialStore? = null
 
     internal sealed class UiState {
@@ -70,6 +72,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        wsClient?.close()
+        wsClient = null
         connection?.close()
         connection = null
         session = null
@@ -130,6 +134,17 @@ class MainActivity : ComponentActivity() {
         }
 
         fun sendKey(key: String, stateName: String, repeatCount: Int = 0) {
+            val ws = wsClient
+            if (ws != null) {
+                io.execute {
+                    try {
+                        ws.sendKeyEvent(key, stateName, repeatCount)
+                    } catch (_: Exception) {
+                        runOnUiThread { state.value = UiState.Error("调试通道已断开") }
+                    }
+                }
+                return
+            }
             val currentSession = session ?: return
             io.execute {
                 try {
@@ -141,6 +156,17 @@ class MainActivity : ComponentActivity() {
         }
 
         fun sendText(text: String, draft: Boolean) {
+            val ws = wsClient
+            if (ws != null) {
+                io.execute {
+                    try {
+                        ws.sendText(text, draft)
+                    } catch (_: Exception) {
+                        runOnUiThread { state.value = UiState.Error("调试通道已断开") }
+                    }
+                }
+                return
+            }
             val currentSession = session ?: return
             io.execute {
                 try {
@@ -151,7 +177,29 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        /** 切换到明文 WS 调试通道（应用层端到端加密；仅供开发调试）。 */
+        fun switchToDebugChannel(host: String) {
+            io.execute {
+                try {
+                    val credential = credentialStore?.load(host)
+                        ?: throw IllegalStateException("该电视尚未配对，调试通道需要已配对凭据")
+                    val client = WsDebugClient(host, credential.controllerId, credential.secret)
+                    runOnUiThread {
+                        wsClient = client
+                        val current = state.value
+                        if (current is UiState.Connected) {
+                            state.value = current.copy(statusMessage = "调试通道已启用（明文 WS + 应用层加密）")
+                        }
+                    }
+                } catch (error: Exception) {
+                    runOnUiThread { state.value = UiState.Error("调试通道连接失败：${error.message}") }
+                }
+            }
+        }
+
         fun disconnect() {
+            wsClient?.close()
+            wsClient = null
             connection?.close()
             connection = null
             session = null
@@ -281,6 +329,10 @@ private fun RemoteScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             KeyButton("播放/暂停") { callbacks.sendKey("MEDIA_PLAY_PAUSE", "PRESS") }
             KeyButton("停止") { callbacks.sendKey("MEDIA_STOP", "PRESS") }
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = { callbacks.switchToDebugChannel(state.host) }) {
+            Text("启用调试通道（WS）")
         }
         Spacer(Modifier.height(16.dp))
         TextButton(onClick = { callbacks.disconnect() }) { Text("断开连接") }
