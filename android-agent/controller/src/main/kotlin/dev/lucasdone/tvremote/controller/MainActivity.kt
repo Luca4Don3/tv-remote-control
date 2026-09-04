@@ -38,6 +38,9 @@ import dev.lucasdone.tvremote.controller.net.WsDebugClient
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 
+/** 控制端在配对/凭据中统一使用的设备名（与 PairingScreen 的显示一致）。 */
+private const val CONTROLLER_NAME = "Android 手机"
+
 class MainActivity : ComponentActivity() {
     private val state = mutableStateOf<UiState>(UiState.Idle)
     private val io = Executors.newSingleThreadExecutor { runnable ->
@@ -120,19 +123,27 @@ class MainActivity : ComponentActivity() {
             val currentSession = session ?: return
             io.execute {
                 try {
-                    // 电视端用户已确认后凭据下发在 pair_credential 推送中；
-                    // 第一版：确认后用占位 controllerId 重新走认证会失败，
-                    // 这里提示用户在电视端确认后重试连接。
+                    // 电视端确认后：接收 pair_credential → pair_store_ack → pair_complete
+                    val paired = currentSession.completePairing()
+                    credentialStore?.save(
+                        host,
+                        ControllerCredentialStore.TvCredential(
+                            controllerId = paired.controllerId,
+                            secret = paired.secret,
+                            tvCertificateFingerprint = paired.tvCertificateFingerprint,
+                            displayName = CONTROLLER_NAME,
+                        ),
+                    )
                     val capabilities = currentSession.authenticate(
-                        controllerId = PENDING_ID,
-                        secret = ByteArray(32),
-                        certificateFingerprint = ByteArray(32),
+                        controllerId = paired.controllerId,
+                        secret = paired.secret,
+                        certificateFingerprint = paired.tvCertificateFingerprint,
                     )
                     runOnUiThread {
                         state.value = UiState.Connected(host = host, capabilities = capabilities)
                     }
                 } catch (error: Exception) {
-                    runOnUiThread { state.value = UiState.Error("认证失败：${error.message}") }
+                    runOnUiThread { state.value = UiState.Error("配对/认证失败：${error.message}") }
                 }
             }
         }
@@ -212,8 +223,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val PENDING_ID = "0".repeat(32)
-
 @Composable
 internal fun Root(state: MutableState<MainActivity.UiState>, callbacks: MainActivity.Callbacks) {
     when (val current = state.value) {
@@ -276,7 +285,7 @@ private fun PairingScreen(state: MainActivity.UiState.Pairing, callbacks: MainAc
             )
             Spacer(Modifier.height(12.dp))
             Button(
-                onClick = { callbacks.startPairing(state.host, code, "Android 手机") },
+                onClick = { callbacks.startPairing(state.host, code, CONTROLLER_NAME) },
                 enabled = code.length == 6,
             ) { Text("连接并配对") }
         } else {

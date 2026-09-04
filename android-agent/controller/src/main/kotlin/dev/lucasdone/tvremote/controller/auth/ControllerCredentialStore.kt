@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.KeyStore
+import dev.lucasdone.tvremote.agent.protocol.requireString
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -28,14 +29,19 @@ class ControllerCredentialStore(context: Context) {
     fun save(tvAddress: String, credential: TvCredential) {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, masterKey(), GCMParameterSpec(128, ByteArray(12)))
-        val payload = linkedMapOf(
-            "controllerId" to credential.controllerId,
-            "secret" to android.util.Base64.encodeToString(credential.secret, android.util.Base64.NO_WRAP),
-            "fingerprint" to android.util.Base64.encodeToString(credential.tvCertificateFingerprint, android.util.Base64.NO_WRAP),
-            "displayName" to credential.displayName,
+        val json = dev.lucasdone.tvremote.agent.protocol.StrictJson.encode(
+            dev.lucasdone.tvremote.agent.protocol.jsonObject(
+                "controllerId" to dev.lucasdone.tvremote.agent.protocol.jsonString(credential.controllerId),
+                "secret" to dev.lucasdone.tvremote.agent.protocol.jsonString(
+                    android.util.Base64.encodeToString(credential.secret, android.util.Base64.NO_WRAP)
+                ),
+                "fingerprint" to dev.lucasdone.tvremote.agent.protocol.jsonString(
+                    android.util.Base64.encodeToString(credential.tvCertificateFingerprint, android.util.Base64.NO_WRAP)
+                ),
+                "displayName" to dev.lucasdone.tvremote.agent.protocol.jsonString(credential.displayName),
+            ),
         )
-        val json = payload.entries.joinToString("|") { (k, v) -> "${k.length}:$k=$v" }
-        val encrypted = cipher.iv + cipher.doFinal(json.toByteArray(Charsets.UTF_8))
+        val encrypted = cipher.iv + cipher.doFinal(json)
         prefs.edit()
             .putString("tv.$tvAddress", android.util.Base64.encodeToString(encrypted, android.util.Base64.NO_WRAP))
             .putString("tv.$tvAddress.name", credential.displayName)
@@ -49,18 +55,16 @@ class ControllerCredentialStore(context: Context) {
         return try {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, masterKey(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
-            val json = String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8)
-            val fields = json.split("|").associate { entry ->
-                val lenSep = entry.indexOf(":")
-                val key = entry.substring(lenSep + 1, entry.indexOf("="))
-                val value = entry.substring(entry.indexOf("=") + 1)
-                key to value
-            }
+            val obj = dev.lucasdone.tvremote.agent.protocol.StrictJson.parseObject(
+                cipher.doFinal(bytes.copyOfRange(12, bytes.size))
+            )
             TvCredential(
-                controllerId = fields.getValue("controllerId"),
-                secret = android.util.Base64.decode(fields.getValue("secret"), android.util.Base64.DEFAULT),
-                tvCertificateFingerprint = android.util.Base64.decode(fields.getValue("fingerprint"), android.util.Base64.DEFAULT),
-                displayName = fields.getValue("displayName"),
+                controllerId = obj.requireString("controllerId", 32),
+                secret = android.util.Base64.decode(obj.requireString("secret", 64), android.util.Base64.DEFAULT),
+                tvCertificateFingerprint = android.util.Base64.decode(
+                    obj.requireString("fingerprint", 64), android.util.Base64.DEFAULT
+                ),
+                displayName = obj.requireString("displayName", 64),
             )
         } catch (_: Exception) {
             null

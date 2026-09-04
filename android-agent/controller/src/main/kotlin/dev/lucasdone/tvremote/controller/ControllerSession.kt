@@ -27,7 +27,7 @@ class ControllerSession(
     val fingerprintHex: String
         get() = Hex.encode(connection.peerFingerprint)
 
-    /** 6 位码配对：等待电视端 SAS 展示与确认。阻塞直至决策或超时。 */
+    /** 6 位码配对阶段一：等待 SAS 展示；凭据下发在 `completePairing` 阶段接收。 */
     fun pairWithCode(code: String, controllerName: String): String {
         require(code.length == 6 && code.all { it.isDigit() }) { "code must be 6 digits" }
         val controllerNonce = randomBytes(32)
@@ -42,22 +42,46 @@ class ControllerSession(
             ),
         )
         val sasMessage = receiveExpect("pairing_sas", "pair_rejected") ?: throw PairingRejectedException("pairing unavailable")
-        if (sasMessage.type == "pair_rejected") throw PairingRejectedException(sasMessage.payload.toString())
-        val pairingId = sasMessage.payload.requireString("pairingId", 32)
-        val sas = sasMessage.payload.requireString("sas", 6)
-        sasMessage.payload.requireString("tvNonce", 64)
-        // SAS 展示给用户双端核对（本方法返回给 UI 层）；确认由电视端用户执行
+        if (sasMessage.type != "pairing_sas") throw PairingRejectedException("pairing rejected on TV")
+        return sasMessage.payload.requireString("sas", 6)
+    }
+
+    /**
+     * 配对阶段二：电视端用户确认后，接收服务端 `pair_credential` 推送，
+     * 回 `pair_store_ack`（携带真实 controllerId）直至 `pair_complete`。
+     * 返回的凭据由调用方持久化（ControllerCredentialStore）。
+     */
+    fun completePairing(): PairedController {
+        val credential = receiveExpect("pair_credential", "pair_rejected")
+            ?: throw PairingRejectedException("pairing closed before credential delivery")
+        if (credential.type != "pair_credential") throw PairingRejectedException("pairing was not confirmed on TV")
+        val controllerId = credential.payload.requireString("controllerId", 32)
+        val secret = Hex.decode(credential.payload.requireString("secret", 64))
+        if (controllerId.length != 32) throw PairingRejectedException("invalid controller id length")
         connection.send(
             requestId = connection.nextRequestId(),
             sessionId = "",
             type = "pair_store_ack",
             payload = jsonObject(
-                "pairingId" to jsonString(pairingId),
-                "controllerId" to jsonString("pending"),
+                "pairingId" to jsonString(credential.payload.requireString("pairingId", 32)),
+                "controllerId" to jsonString(controllerId),
             ),
         )
-        return sas
+        val complete = receiveExpect("pair_complete") ?: throw PairingRejectedException("no pair_complete")
+        val confirmedId = complete.payload.requireString("controllerId", 32)
+        if (confirmedId != controllerId) throw PairingRejectedException("pair_complete controller id mismatch")
+        return PairedController(
+            controllerId = controllerId,
+            secret = secret,
+            tvCertificateFingerprint = connection.peerFingerprint,
+        )
     }
+
+    data class PairedController(
+        val controllerId: String,
+        val secret: ByteArray,
+        val tvCertificateFingerprint: ByteArray,
+    )
 
     /**
      * 认证挑战：controllerId + secret + 电视证书指纹（由凭据存储持有）。
