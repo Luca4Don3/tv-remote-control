@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "tv-remote-agent"
 include(":app")
+include(":protocol-core")
