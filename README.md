@@ -16,6 +16,12 @@ Android TV 应用开发测试辅助工具：电视端 APK 提供安全的按键�
 
 ## 当前实现状态
 
+> 本分支（`feat/android-controller`）新增：Rust 协议核心（`core-rs`）、文本注入协议、
+> 电视端扫码配对、WebSocket 调试通道、Android 手机控制端（`android-agent/controller`）、
+> 纯 JVM 共享协议模块（`android-agent/protocol-core`）与 API 19-36 兼容矩阵（`docs/compat-matrix.md`）。
+> 详见 CHANGELOG 的 Unreleased 段落。新增硬件相关行为（WS 通道真机、扫码配对真机、
+> 手机控制端真机）保持 `UNVERIFIED`。
+
 已实现：
 
 - UDP 多设备发现、TCP+TLS、SAS 配对、证书 pin、凭据迁移、认证、心跳、能力与按键 ACK。
