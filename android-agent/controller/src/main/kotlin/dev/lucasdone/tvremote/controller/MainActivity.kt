@@ -123,7 +123,11 @@ class MainActivity : ComponentActivity() {
                     // 电视端用户已确认后凭据下发在 pair_credential 推送中；
                     // 第一版：确认后用占位 controllerId 重新走认证会失败，
                     // 这里提示用户在电视端确认后重试连接。
-                    val capabilities = currentSession.authenticate(controllerId = PENDING_ID, secret = ByteArray(32))
+                    val capabilities = currentSession.authenticate(
+                        controllerId = PENDING_ID,
+                        secret = ByteArray(32),
+                        certificateFingerprint = ByteArray(32),
+                    )
                     runOnUiThread {
                         state.value = UiState.Connected(host = host, capabilities = capabilities)
                     }

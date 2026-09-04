@@ -1,5 +1,6 @@
 package dev.lucasdone.tvremote.controller
 
+import dev.lucasdone.tvremote.agent.auth.AuthTranscript
 import dev.lucasdone.tvremote.agent.protocol.Hex
 import dev.lucasdone.tvremote.agent.protocol.JsonValue
 import dev.lucasdone.tvremote.agent.protocol.ProtocolCodec
@@ -58,8 +59,15 @@ class ControllerSession(
         return sas
     }
 
-    /** 认证挑战：controllerId + secret（由凭据存储持有）。 */
-    fun authenticate(controllerId: String, secret: ByteArray): Capabilities {
+    /**
+     * 认证挑战：controllerId + secret + 电视证书指纹（由凭据存储持有）。
+     * 响应计算复用 :protocol-core 的 AuthTranscript（与电视端/桌面端单一实现）。
+     */
+    fun authenticate(
+        controllerId: String,
+        secret: ByteArray,
+        certificateFingerprint: ByteArray,
+    ): Capabilities {
         val clientNonce = randomBytes(32)
         connection.send(
             requestId = connection.nextRequestId(),
@@ -73,9 +81,14 @@ class ControllerSession(
         val challenge = receiveExpect("auth_challenge") ?: throw AuthFailedException("no challenge")
         val challengeId = challenge.payload.requireString("challengeId", 64)
         val serverNonce = Hex.decode(challenge.payload.requireString("serverNonce", 64))
-        val response = hmacSha256(secret, "$controllerId|$challengeId|${Hex.encode(clientNonce)}|${
-            Hex.encode(serverNonce)
-        }".toByteArray(Charsets.UTF_8))
+        val response = AuthTranscript.hmac(
+            secret = secret,
+            certificateFingerprint = certificateFingerprint,
+            controllerId = controllerId,
+            challengeId = challengeId,
+            clientNonce = clientNonce,
+            serverNonce = serverNonce,
+        )
         connection.send(
             requestId = connection.nextRequestId(),
             sessionId = "",
@@ -134,12 +147,6 @@ class ControllerSession(
             if (message.type == "error") return message
             // 其他服务端推送（media_state 等）忽略
         }
-    }
-
-    private fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
-        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
-        mac.init(javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"))
-        return mac.doFinal(data)
     }
 
     private fun randomBytes(size: Int): ByteArray = ByteArray(size).also(random::nextBytes)
