@@ -40,8 +40,8 @@
     "androidPlatformToolsWindows": {
       "version": "37.0.1",
       "repositoryMetadataUrl": "https://dl.google.com/android/repository/repository2-1.xml",
-      "repositoryMetadataSize": 367919,
-      "repositoryMetadataSha256": "ea0509d1f955495ed543d9b16edfb55758fc3df5177210b043580e6d563d0b32",
+      "repositoryMetadataSize": 371995,
+      "repositoryMetadataSha256": "461e45d338c8969a89b4f8b05d8abd698a2b58403fe6d8c2cca241b4a502ee0a",
       "url": "https://dl.google.com/android/repository/platform-tools_r37.0.1-win.zip",
       "size": 8044989,
       "repositoryChecksumAlgorithm": "sha1",
