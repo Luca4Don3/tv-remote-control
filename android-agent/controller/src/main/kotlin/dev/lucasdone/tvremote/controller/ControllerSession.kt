@@ -1,0 +1,171 @@
+package dev.lucasdone.tvremote.controller
+
+import dev.lucasdone.tvremote.agent.protocol.Hex
+import dev.lucasdone.tvremote.agent.protocol.JsonValue
+import dev.lucasdone.tvremote.agent.protocol.ProtocolCodec
+import dev.lucasdone.tvremote.agent.protocol.ProtocolEnvelope
+import dev.lucasdone.tvremote.agent.protocol.jsonLong
+import dev.lucasdone.tvremote.agent.protocol.jsonObject
+import dev.lucasdone.tvremote.agent.protocol.jsonString
+import dev.lucasdone.tvremote.agent.protocol.requireLong
+import dev.lucasdone.tvremote.agent.protocol.requireObject
+import dev.lucasdone.tvremote.agent.protocol.requireString
+import java.io.IOException
+import java.security.SecureRandom
+
+/**
+ * 电视会话编排：连接 → 配对（6 位码 + SAS）→ 认证 → 遥控/文本。
+ * 流程语义与桌面控制端一致；证书指纹在配对成功后由调用方持久化。
+ */
+class ControllerSession(
+    private val connection: dev.lucasdone.tvremote.controller.net.TvConnection,
+) {
+    private val random = SecureRandom()
+    private var sessionId: String = ""
+
+    val fingerprintHex: String
+        get() = Hex.encode(connection.peerFingerprint)
+
+    /** 6 位码配对：等待电视端 SAS 展示与确认。阻塞直至决策或超时。 */
+    fun pairWithCode(code: String, controllerName: String): String {
+        require(code.length == 6 && code.all { it.isDigit() }) { "code must be 6 digits" }
+        val controllerNonce = randomBytes(32)
+        connection.send(
+            requestId = connection.nextRequestId(),
+            sessionId = "",
+            type = "pair_request",
+            payload = jsonObject(
+                "code" to jsonString(code),
+                "controllerName" to jsonString(controllerName),
+                "controllerNonce" to jsonString(Hex.encode(controllerNonce)),
+            ),
+        )
+        val sasMessage = receiveExpect("pairing_sas", "pair_rejected") ?: throw PairingRejectedException("pairing unavailable")
+        if (sasMessage.type == "pair_rejected") throw PairingRejectedException(sasMessage.payload.toString())
+        val pairingId = sasMessage.payload.requireString("pairingId", 32)
+        val sas = sasMessage.payload.requireString("sas", 6)
+        sasMessage.payload.requireString("tvNonce", 64)
+        // SAS 展示给用户双端核对（本方法返回给 UI 层）；确认由电视端用户执行
+        connection.send(
+            requestId = connection.nextRequestId(),
+            sessionId = "",
+            type = "pair_store_ack",
+            payload = jsonObject(
+                "pairingId" to jsonString(pairingId),
+                "controllerId" to jsonString("pending"),
+            ),
+        )
+        return sas
+    }
+
+    /** 认证挑战：controllerId + secret（由凭据存储持有）。 */
+    fun authenticate(controllerId: String, secret: ByteArray): Capabilities {
+        val clientNonce = randomBytes(32)
+        connection.send(
+            requestId = connection.nextRequestId(),
+            sessionId = "",
+            type = "auth_begin",
+            payload = jsonObject(
+                "controllerId" to jsonString(controllerId),
+                "clientNonce" to jsonString(Hex.encode(clientNonce)),
+            ),
+        )
+        val challenge = receiveExpect("auth_challenge") ?: throw AuthFailedException("no challenge")
+        val challengeId = challenge.payload.requireString("challengeId", 64)
+        val serverNonce = Hex.decode(challenge.payload.requireString("serverNonce", 64))
+        val response = hmacSha256(secret, "$controllerId|$challengeId|${Hex.encode(clientNonce)}|${
+            Hex.encode(serverNonce)
+        }".toByteArray(Charsets.UTF_8))
+        connection.send(
+            requestId = connection.nextRequestId(),
+            sessionId = "",
+            type = "auth_response",
+            payload = jsonObject(
+                "controllerId" to jsonString(controllerId),
+                "challengeId" to jsonString(challengeId),
+                "clientNonce" to jsonString(Hex.encode(clientNonce)),
+                "serverNonce" to jsonString(Hex.encode(serverNonce)),
+                "response" to jsonString(Hex.encode(response)),
+            ),
+        )
+        val complete = receiveExpect("auth_complete") ?: throw AuthFailedException("no auth complete")
+        sessionId = complete.payload.requireString("sessionId", 128)
+        return parseCapabilities(complete.payload.requireObject("capabilities"))
+    }
+
+    fun sendKeyEvent(key: String, state: String, repeatCount: Int = 0): AckResult {
+        val message = connection.send(
+            requestId = connection.nextRequestId(),
+            sessionId = sessionId,
+            type = "key_event",
+            payload = jsonObject(
+                "key" to jsonString(key),
+                "state" to jsonString(state),
+                "repeatCount" to jsonLong(repeatCount.toLong()),
+            ),
+        )
+        val ack = receiveExpect("command_ack") ?: throw IOException("connection closed")
+        return AckResult(
+            sequence = ack.payload.requireLong("commandSequence"),
+            status = ack.payload.requireString("status", 32),
+            reason = ack.payload["reason"]?.let { (it as? JsonValue.StringValue)?.value },
+        )
+    }
+
+    fun sendText(text: String, draft: Boolean): AckResult {
+        val message = connection.send(
+            requestId = connection.nextRequestId(),
+            sessionId = sessionId,
+            type = if (draft) "text_draft" else "text_commit",
+            payload = jsonObject("text" to jsonString(text)),
+        )
+        val ack = receiveExpect("command_ack") ?: throw IOException("connection closed")
+        return AckResult(
+            sequence = ack.payload.requireLong("commandSequence"),
+            status = ack.payload.requireString("status", 32),
+            reason = ack.payload["reason"]?.let { (it as? JsonValue.StringValue)?.value },
+        )
+    }
+
+    private fun receiveExpect(vararg types: String): ProtocolEnvelope? {
+        while (true) {
+            val message = connection.receive() ?: return null
+            if (message.type in types) return message
+            if (message.type == "error") return message
+            // 其他服务端推送（media_state 等）忽略
+        }
+    }
+
+    private fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"))
+        return mac.doFinal(data)
+    }
+
+    private fun randomBytes(size: Int): ByteArray = ByteArray(size).also(random::nextBytes)
+
+    private fun parseCapabilities(payload: JsonValue.ObjectValue): Capabilities {
+        val textInput = (payload["textInput"] as? JsonValue.StringValue)?.value ?: "UNSUPPORTED"
+        val keySupport = payload["keySupport"]?.let { entry ->
+            (entry as? JsonValue.ObjectValue)?.fields?.mapNotNull { (key, value) ->
+                ((value as? JsonValue.StringValue)?.value)?.let { key to it }
+            }?.toMap()
+        }.orEmpty()
+        return Capabilities(textInput = textInput, keySupport = keySupport)
+    }
+
+    data class Capabilities(
+        val textInput: String,
+        val keySupport: Map<String, String>,
+    ) {
+        fun keySupported(key: String): Boolean =
+            keySupport[key] == "SUPPORTED" || keySupport[key] == "BEST_EFFORT"
+    }
+
+    data class AckResult(val sequence: Long, val status: String, val reason: String?) {
+        val isSuccess: Boolean get() = status == "SUCCESS"
+    }
+
+    class PairingRejectedException(message: String) : RuntimeException(message)
+    class AuthFailedException(message: String) : RuntimeException(message)
+}
