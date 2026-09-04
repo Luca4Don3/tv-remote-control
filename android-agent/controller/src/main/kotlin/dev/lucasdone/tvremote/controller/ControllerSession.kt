@@ -19,7 +19,7 @@ import java.security.SecureRandom
  * 流程语义与桌面控制端一致；证书指纹在配对成功后由调用方持久化。
  */
 class ControllerSession(
-    private val connection: dev.lucasdone.tvremote.controller.net.TvConnection,
+    private val connection: dev.lucasdone.tvremote.controller.net.ConnectionTransport,
 ) {
     private val random = SecureRandom()
     private var sessionId: String = ""

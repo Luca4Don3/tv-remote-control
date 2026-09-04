@@ -35,18 +35,18 @@ import javax.net.ssl.X509TrustManager
  */
 class TvConnection private constructor(
     private val socket: SSLSocket,
-    val peerFingerprint: ByteArray,
-) : AutoCloseable {
+    override val peerFingerprint: ByteArray,
+) : ConnectionTransport {
     private val inboundSequence = AtomicLong(0)
     private val outboundSequence = AtomicLong(0)
 
     val input: InputStream = socket.inputStream
     val output: OutputStream = socket.outputStream
 
-    fun nextRequestId(): String = "c-${outboundSequence.incrementAndGet()}"
+    override fun nextRequestId(): String = "c-${outboundSequence.incrementAndGet()}"
 
     @Synchronized
-    fun send(requestId: String, sessionId: String, type: String, payload: JsonValue.ObjectValue): ProtocolEnvelope {
+    override fun send(requestId: String, sessionId: String, type: String, payload: JsonValue.ObjectValue): ProtocolEnvelope {
         val sequence = outboundSequence.incrementAndGet()
         val envelope = ProtocolEnvelope(
             protocolVersion = ProtocolCodec.VERSION,
@@ -61,7 +61,7 @@ class TvConnection private constructor(
     }
 
     /** 阻塞读一帧；返回 null 表示对端关闭。 */
-    fun receive(): ProtocolEnvelope? {
+    override fun receive(): ProtocolEnvelope? {
         val frame = FrameCodec.read(input) ?: return null
         val envelope = ProtocolCodec.decode(frame)
         if (envelope.sequence <= inboundSequence.get()) throw IOException("sequence is not increasing")
