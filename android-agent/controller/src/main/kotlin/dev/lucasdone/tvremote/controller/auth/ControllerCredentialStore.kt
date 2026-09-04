@@ -30,14 +30,14 @@ class ControllerCredentialStore(context: Context) {
         cipher.init(Cipher.ENCRYPT_MODE, masterKey(), GCMParameterSpec(128, ByteArray(12)))
         val payload = linkedMapOf(
             "controllerId" to credential.controllerId,
-            "secret" to java.util.Base64.getEncoder().encodeToString(credential.secret),
-            "fingerprint" to java.util.Base64.getEncoder().encodeToString(credential.tvCertificateFingerprint),
+            "secret" to android.util.Base64.encodeToString(credential.secret, android.util.Base64.NO_WRAP),
+            "fingerprint" to android.util.Base64.encodeToString(credential.tvCertificateFingerprint, android.util.Base64.NO_WRAP),
             "displayName" to credential.displayName,
         )
         val json = payload.entries.joinToString("|") { (k, v) -> "${k.length}:$k=$v" }
         val encrypted = cipher.iv + cipher.doFinal(json.toByteArray(Charsets.UTF_8))
         prefs.edit()
-            .putString("tv.$tvAddress", java.util.Base64.getEncoder().encodeToString(encrypted))
+            .putString("tv.$tvAddress", android.util.Base64.encodeToString(encrypted, android.util.Base64.NO_WRAP))
             .putString("tv.$tvAddress.name", credential.displayName)
             .apply()
     }
@@ -45,7 +45,7 @@ class ControllerCredentialStore(context: Context) {
     @Synchronized
     fun load(tvAddress: String): TvCredential? {
         val stored = prefs.getString("tv.$tvAddress", null) ?: return null
-        val bytes = java.util.Base64.getDecoder().decode(stored)
+        val bytes = android.util.Base64.decode(stored, android.util.Base64.DEFAULT)
         return try {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, masterKey(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
@@ -58,8 +58,8 @@ class ControllerCredentialStore(context: Context) {
             }
             TvCredential(
                 controllerId = fields.getValue("controllerId"),
-                secret = java.util.Base64.getDecoder().decode(fields.getValue("secret")),
-                tvCertificateFingerprint = java.util.Base64.getDecoder().decode(fields.getValue("fingerprint")),
+                secret = android.util.Base64.decode(fields.getValue("secret"), android.util.Base64.DEFAULT),
+                tvCertificateFingerprint = android.util.Base64.decode(fields.getValue("fingerprint"), android.util.Base64.DEFAULT),
                 displayName = fields.getValue("displayName"),
             )
         } catch (_: Exception) {
