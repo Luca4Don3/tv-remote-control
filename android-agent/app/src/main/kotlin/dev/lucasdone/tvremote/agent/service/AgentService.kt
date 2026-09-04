@@ -18,6 +18,8 @@ import dev.lucasdone.tvremote.agent.auth.PairingWindow
 import dev.lucasdone.tvremote.agent.auth.SessionManager
 import dev.lucasdone.tvremote.agent.command.AccessibilityCommandExecutor
 import dev.lucasdone.tvremote.agent.command.CommandDispatcher
+import dev.lucasdone.tvremote.agent.command.AccessibilityTextCommandExecutor
+import dev.lucasdone.tvremote.agent.command.TextCommandDispatcher
 import dev.lucasdone.tvremote.agent.command.KeyStateTracker
 import dev.lucasdone.tvremote.agent.command.MediaCommandExecutor
 import dev.lucasdone.tvremote.agent.device.CapabilityDetector
@@ -136,6 +138,9 @@ class AgentService : Service(), ControlServerCallbacks {
                         KeyStateTracker(),
                         listOf(AccessibilityCommandExecutor(), MediaCommandExecutor(this)),
                     )
+                },
+                textDispatcherFactory = {
+                    TextCommandDispatcher(listOf(AccessibilityTextCommandExecutor()))
                 },
                 mediaCoordinator = media,
                 mediaAvailable = { CapabilityDetector.isMediaTransportAvailable(this) },

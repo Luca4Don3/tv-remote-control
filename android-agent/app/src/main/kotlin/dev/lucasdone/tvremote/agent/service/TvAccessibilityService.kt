@@ -5,7 +5,10 @@ import android.os.Build
 import android.view.View
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.os.Bundle
 import dev.lucasdone.tvremote.agent.model.LogicalKey
+import dev.lucasdone.tvremote.agent.model.TextAction
+import dev.lucasdone.tvremote.agent.model.TextCommand
 
 class TvAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
@@ -61,6 +64,34 @@ class TvAccessibilityService : AccessibilityService() {
         return try {
             target.performAction(AccessibilityNodeInfo.ACTION_FOCUS) ||
                 target.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+        } finally {
+            recycle(target, focused, root)
+        }
+    }
+
+    /**
+     * 向当前输入焦点节点提交文本。ACTION_SET_TEXT 要求 API 21+。
+     * COMMIT/DRAFT 首版同语义（整段覆盖写回焦点节点）；DRAFT 预留给
+     * 后续 IME commitContent 流式草稿。
+     */
+    fun performText(command: TextCommand): Boolean {
+        if (Build.VERSION.SDK_INT < 21) return false
+        val root = rootInActiveWindow ?: return false
+        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+            ?: run { recycle(root); return false }
+        val target = sequenceOf(focused)
+            .plus(generateSequence(focused) { it.parent }.take(4).toList())
+            .firstOrNull { node -> node.isEditable } ?: run {
+            recycle(focused, root)
+            return false
+        }
+        val arguments = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, command.text)
+        }
+        return try {
+            target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) &&
+                command.action == TextAction.COMMIT
         } finally {
             recycle(target, focused, root)
         }

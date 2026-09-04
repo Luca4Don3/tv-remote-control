@@ -10,10 +10,13 @@ import dev.lucasdone.tvremote.agent.auth.PairingSubmission
 import dev.lucasdone.tvremote.agent.auth.PairingWindow
 import dev.lucasdone.tvremote.agent.auth.SessionManager
 import dev.lucasdone.tvremote.agent.command.CommandDispatcher
+import dev.lucasdone.tvremote.agent.command.TextCommandDispatcher
 import dev.lucasdone.tvremote.agent.media.MediaSessionCoordinator
 import dev.lucasdone.tvremote.agent.model.AckStatus
 import dev.lucasdone.tvremote.agent.model.KeyEventCommand
 import dev.lucasdone.tvremote.agent.model.KeyState
+import dev.lucasdone.tvremote.agent.model.TextAction
+import dev.lucasdone.tvremote.agent.model.TextCommand
 import dev.lucasdone.tvremote.agent.model.LogicalKey
 import dev.lucasdone.tvremote.agent.protocol.FrameCodec
 import dev.lucasdone.tvremote.agent.protocol.Hex
@@ -59,6 +62,7 @@ class ControlServer(
     private val pairingManager: PairingManager,
     private val sessionManager: SessionManager,
     private val dispatcherFactory: () -> CommandDispatcher,
+    private val textDispatcherFactory: () -> TextCommandDispatcher,
     private val mediaCoordinator: MediaSessionCoordinator,
     private val mediaAvailable: () -> Boolean,
     private val capabilities: () -> JsonValue.ObjectValue,
@@ -71,6 +75,7 @@ class ControlServer(
         val controllerId: String,
         val sessionId: String,
         val dispatcher: CommandDispatcher,
+        val textDispatcher: TextCommandDispatcher,
     )
 
     private class RequestRateLimiter {
@@ -456,7 +461,8 @@ class ControlServer(
         }
 
         val dispatcher = dispatcherFactory()
-        val activeConnection = ActiveConnection(socket, connection, controllerId, session.sessionId, dispatcher)
+        val textDispatcher = textDispatcherFactory()
+        val activeConnection = ActiveConnection(socket, connection, controllerId, session.sessionId, dispatcher, textDispatcher)
         if (!active.compareAndSet(null, activeConnection)) {
             sessionManager.revokeSession(session.sessionId)
             sendError(connection, responseMessage, "BUSY", "another controller is active")
@@ -509,6 +515,8 @@ class ControlServer(
                     connection.send(message.requestId, session.sessionId, "capabilities", capabilities())
                 }
                 "key_event" -> handleKeyEvent(connection, current, message, limiter)
+                "text_commit" -> handleTextCommand(connection, current, message, limiter, TextAction.COMMIT)
+                "text_draft" -> handleTextCommand(connection, current, message, limiter, TextAction.DRAFT)
                 "media_start" -> handleMediaStart(connection, current, message)
                 "media_stop" -> handleMediaStop(connection, current, message)
                 "disconnect" -> {
@@ -584,6 +592,32 @@ class ControlServer(
         connection.send(message.requestId, current.sessionId, "command_ack", JsonValue.ObjectValue(fields))
     }
 
+    private fun handleTextCommand(
+        connection: Connection,
+        current: ActiveConnection,
+        message: ProtocolEnvelope,
+        limiter: RequestRateLimiter,
+        action: TextAction,
+    ) {
+        requireFields(message.payload, setOf("text"))
+        val ack = if (!limiter.allow()) {
+            dev.lucasdone.tvremote.agent.model.CommandAck(message.sequence, AckStatus.REJECTED, "rate limit exceeded")
+        } else {
+            val text = message.payload.requireString("text", MAX_TEXT_LENGTH)
+            if (text.isEmpty()) {
+                dev.lucasdone.tvremote.agent.model.CommandAck(message.sequence, AckStatus.REJECTED, "text must not be empty")
+            } else {
+                current.textDispatcher.dispatch(TextCommand(message.sequence, action, text))
+            }
+        }
+        val fields = linkedMapOf<String, JsonValue>(
+            "commandSequence" to jsonLong(ack.sequence),
+            "status" to jsonString(ack.status.name),
+        )
+        ack.reason?.let { fields["reason"] = jsonString(it) }
+        connection.send(message.requestId, current.sessionId, "command_ack", JsonValue.ObjectValue(fields))
+    }
+
     private fun sendError(connection: Connection, request: ProtocolEnvelope, code: String, message: String) {
         connection.send(
             request.requestId,
@@ -631,6 +665,7 @@ class ControlServer(
         private const val COMMAND_RATE_WINDOW_MS = 1_000L
         private const val MAX_COMMANDS_PER_WINDOW = 60
         private const val MAX_REPEAT_COUNT = 10_000
+        private const val MAX_TEXT_LENGTH = 4 * 1024
         private const val MAX_CONNECTIONS = 4
         private const val MAX_QUEUED_CONNECTIONS = 4
         private const val MEDIA_CLEANUP_TIMEOUT_MS = 2_000L
