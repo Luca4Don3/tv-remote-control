@@ -133,17 +133,17 @@ impl Envelope {
         self.validate()?;
         let mut root = JsonObject::new();
         root.insert("protocolVersion", json_long(VERSION))
-            .map_err(|e| err(e))?;
+            .map_err(err)?;
         root.insert("requestId", json_string(&self.request_id))
-            .map_err(|e| err(e))?;
+            .map_err(err)?;
         root.insert("sessionId", json_string(&self.session_id))
-            .map_err(|e| err(e))?;
+            .map_err(err)?;
         root.insert("sequence", json_long(self.sequence))
-            .map_err(|e| err(e))?;
+            .map_err(err)?;
         root.insert("type", json_string(&self.message_type))
-            .map_err(|e| err(e))?;
+            .map_err(err)?;
         root.insert("payload", JsonValue::Object(self.payload.clone()))
-            .map_err(|e| err(e))?;
+            .map_err(err)?;
         let bytes = json::encode(&JsonValue::Object(root))?;
         if bytes.len() > crate::frame::MAX_FRAME_SIZE {
             return Err(ProtocolError::TooLarge);

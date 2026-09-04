@@ -79,7 +79,7 @@ impl DirectionCipher {
     fn nonce(counter: u64) -> GenericArray<u8, U12> {
         let mut n = [0u8; 12];
         n[4..].copy_from_slice(&counter.to_be_bytes());
-        GenericArray::from_slice(&n).clone()
+        *GenericArray::from_slice(&n)
     }
 
     /// 加密（AAD 参与认证）。返回 ciphertext || tag。

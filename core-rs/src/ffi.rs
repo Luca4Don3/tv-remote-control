@@ -62,7 +62,7 @@ impl SessionCrypto {
         psk: Vec<u8>,
         client_random: Vec<u8>,
         server_random: Vec<u8>,
-        is_client: bool,
+        _is_client: bool,
         replay_window_bits: u8,
     ) -> Result<Self, FfiError> {
         let psk: [u8; 32] = psk
@@ -129,6 +129,12 @@ pub struct WsFrame {
     /// RFC 6455 opcode：1=text 2=binary 8=close 9=ping 10=pong。
     pub opcode: u8,
     pub payload: Vec<u8>,
+}
+
+impl Default for WsCodec {
+    fn default() -> Self {
+        WsCodec { decoder: std::sync::Mutex::new(WsDecoder::new()) }
+    }
 }
 
 #[uniffi::export]

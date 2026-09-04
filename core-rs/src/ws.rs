@@ -126,14 +126,7 @@ impl WsDecoder {
             }
             OPCODE_PING => Ok(Some(WsMessage::Ping(payload))),
             OPCODE_PONG => Ok(Some(WsMessage::Pong(payload))),
-            OPCODE_CLOSE => {
-                let code = if payload.len() >= 2 {
-                    Some(u16::from_be_bytes([payload[0], payload[1]]))
-                } else {
-                    None
-                };
-                Err(WsError::Closed) // close 帧同时终结解码
-            }
+            OPCODE_CLOSE => Err(WsError::Closed), // close 帧同时终结解码
             _ => Err(WsError::Protocol(format!("unknown opcode {opcode}"))),
         }
     }

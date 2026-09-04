@@ -22,6 +22,26 @@ jobs:
         env:
           GRADLE_USER_HOME: ${{ runner.temp }}/gradle-user-home
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug assembleRelease
+      - name: Controller module tests, lint, and build
+        working-directory: android-agent
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-user-home
+        run: ./gradlew --no-daemon :controller:testDebugUnitTest :controller:lintDebug :controller:assembleDebug
+
+  rust-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - name: Rust core tests
+        working-directory: core-rs
+        run: cargo test --locked
+      - name: Rust core clippy
+        working-directory: core-rs
+        run: cargo clippy --locked -- -D warnings
 
   windows-zig:
     runs-on: ubuntu-latest

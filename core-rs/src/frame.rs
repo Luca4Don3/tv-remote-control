@@ -104,9 +104,7 @@ pub fn read_frame<R: Read>(input: &mut R) -> Result<Option<Frame>, FrameDecodeEr
         return Err(FrameDecodeError::TooLarge);
     }
     let mut payload = vec![0u8; len];
-    input
-        .read_exact(&mut payload)
-        .map_err(|e| FrameDecodeError::Io(e))?;
+    input.read_exact(&mut payload).map_err(FrameDecodeError::Io)?;
     Ok(Some(Frame { payload }))
 }
 
