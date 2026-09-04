@@ -5,6 +5,7 @@
 
 pub mod crypto;
 pub mod envelope;
+pub mod replay;
 pub mod json;
 pub mod frame;
 pub mod pairing;
