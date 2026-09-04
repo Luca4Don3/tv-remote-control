@@ -52,15 +52,6 @@
     "minicap": {
       "state": "disabled_no_verified_device_profile",
       "artifacts": []
-    },
-    "zxingCore": {
-      "version": "3.5.3",
-      "maven": "com.google.zxing:core:3.5.3",
-      "license": "Apache-2.0",
-      "purpose": "电视端扫码配对二维码生成"
-    },
-    "jna": {
-      "note": "未引入；uniffi Kotlin 绑定依赖 JNA（桌面库），Android 端以 Kotlin 对齐实现替代，Rust 绑定主消费者为 iOS 端"
     }
   },
   "downloadPolicy": {

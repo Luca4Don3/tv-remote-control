@@ -8,6 +8,7 @@ Release packaging must include the license texts from each downloaded source arc
 | scrcpy server | 4.1 | Apache-2.0 | Optional user-authorized ADB video/audio backend |
 | Android SDK Platform Tools | 37.0.1 | Android SDK License (text bundled as `LICENSE-android-platform-tools.txt`) | Optional ADB executable; downloaded only after user confirmation |
 | Kotlin standard library | 2.3.21 | Apache-2.0 | Embedded in the Android APK (bundled by AGP built-in Kotlin support) |
+| ZXing core | 3.5.3 | Apache-2.0 | TV-side pairing QR code generation |
 
 ## Build-time tools
 
@@ -21,6 +22,9 @@ These tools are used to build and test the project but are not distributed in re
 | Eclipse Temurin JDK | 17.0.20 | GPL-2.0-with-classpath-exception | Android build runtime |
 | Android SDK Platform | 36 | Android SDK License | Android compilation SDK |
 | JUnit | 4.13.2 | EPL-1.0 | Unit tests only; not distributed |
+| AndroidX Compose (BOM 2024.12.01 / material3 / ui / activity-compose / lifecycle) | per BOM | Apache-2.0 | Phone controller (`:controller`) UI framework |
+| uniffi | 0.32.0 | MPL-2.0 | Rust core FFI bindings (build-time bindings generator) |
+| RustCrypto (aes-gcm, hkdf, sha2, subtle, zeroize) | per Cargo.lock | Apache-2.0 / MIT | `core-rs` session crypto |
 
 ## CI infrastructure
 
