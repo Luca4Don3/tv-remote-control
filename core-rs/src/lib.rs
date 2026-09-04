@@ -4,6 +4,7 @@
 //! 所有消息均为 JSON 控制消息（UTF-8）或二进制媒体包。
 
 pub mod crypto;
+pub mod json;
 pub mod frame;
 pub mod pairing;
 
