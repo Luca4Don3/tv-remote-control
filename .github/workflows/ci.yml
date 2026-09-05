@@ -178,7 +178,8 @@ jobs:
             -L core-rs/target/aarch64-apple-ios-sim/release -ltvremote_core \
             -framework SwiftUI -framework UIKit \
             -o "${RUNNER_TEMP}/TVRemoteController-ios-sim"
-                - name: ARM64 core and complete app link
+          file "${RUNNER_TEMP}/TVRemoteController-ios-sim"
+      - name: ARM64 core and complete app link
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-global-cache
           ZIG_LOCAL_CACHE_DIR: ${{ runner.temp }}/zig-local-cache-macos
