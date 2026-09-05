@@ -58,11 +58,23 @@ pub fn build(b: *std.Build) void {
     if (is_windows) core_library.root_module.addCSourceFile(.{
         .file = b.path("src/windows_runtime_paths.c"),
         .flags = &.{
-            "-std=c11", "-Wall", "-Wextra", "-Werror",
+            "-std=c11",                                              "-Wall", "-Wextra", "-Werror",
             b.fmt("-ffile-prefix-map={s}=.", .{b.pathFromRoot("")}),
         },
     });
+    // 静态库引用 f128 软浮点符号（__divtf3/__roundq 族等）；Apple compiler-rt
+    // 剔除了 fp128 实现，必须捆绑 Zig 自带 compiler_rt 才可被外部链接。
+    // iOS：链接期即需符号；macOS：dylib 链接曾容许 lazy undefined roundq，
+    // 运行时触发 f128 路径（JSON 解析）会 crash——一并捆绑消除。
+    if (is_ios or is_macos_arm64) core_library.bundle_compiler_rt = true;
     b.installArtifact(core_library);
+    // iOS 静态库链 mbedTLS：静态依赖产物不会随 --prefix 安装（在 zig-cache 内），
+    // 为 iOS 显式安装三个 mbedTLS 静态库供外部 swiftc 链接门禁使用
+    if (is_ios) {
+        b.installArtifact(mbed.tls);
+        b.installArtifact(mbed.x509);
+        b.installArtifact(mbed.crypto);
+    }
 
     if (is_windows) {
         const generated = b.addWriteFiles();
