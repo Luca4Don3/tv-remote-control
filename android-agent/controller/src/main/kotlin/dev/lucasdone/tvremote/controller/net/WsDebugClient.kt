@@ -62,7 +62,7 @@ class WsDebugClient(
                 ),
             ),
         )
-        WsFrameCodec.writeText(socket.outputStream, String(hello, Charsets.UTF_8))
+        WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_TEXT, hello)
         val ackFrame = WsFrameCodec.read(socket.inputStream) ?: throw IOException("closed during hello")
         val ack = ProtocolCodec.decode(ackFrame.payload)
         if (ack.type != "ws_hello_ack") throw IOException("unexpected handshake reply: ${ack.type}")
@@ -114,7 +114,7 @@ class WsDebugClient(
             outboundSequence += 1
             cipher.seal(message, aad(counter))
         }
-        WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_BINARY, sealed)
+        WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_BINARY, sealed)
         while (true) {
             val frame = WsFrameCodec.read(socket.inputStream) ?: throw IOException("connection closed")
             if (frame.opcode == WsFrameCodec.OPCODE_PING) {

@@ -58,6 +58,14 @@ class WsChannelTest {
     }
 
     @Test
+    fun clientWriteRoundtripThroughServerRead() {
+        val out = java.io.ByteArrayOutputStream()
+        WsFrameCodec.writeClient(out, WsFrameCodec.OPCODE_TEXT, "masked".toByteArray())
+        val incoming = WsFrameCodec.read(java.io.ByteArrayInputStream(out.toByteArray()))!!
+        assertArrayEquals("masked".toByteArray(), incoming.payload)
+    }
+
+    @Test
     fun unmaskedClientFrameRejected() {
         val raw = byteArrayOf(0x81.toByte(), 0x05) + "hello".toByteArray()
         val stream = ByteArrayInputStream(raw)

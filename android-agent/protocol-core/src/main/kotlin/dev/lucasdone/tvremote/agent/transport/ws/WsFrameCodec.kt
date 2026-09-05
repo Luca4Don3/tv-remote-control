@@ -97,6 +97,35 @@ object WsFrameCodec {
         }
     }
 
+    /** 客户端出向帧（RFC 6455 强制掩码，掩码键由 SecureRandom 生成）。 */
+    fun writeClient(
+        output: OutputStream,
+        opcode: Int,
+        payload: ByteArray,
+        random: java.security.SecureRandom = java.security.SecureRandom(),
+    ) {
+        if (payload.size > MAX_PAYLOAD_BYTES) throw WsProtocolException("payload exceeds 64 KiB")
+        val mask = ByteArray(4).also(random::nextBytes)
+        output.write(0x80 or opcode)
+        val size = payload.size
+        val maskedFlag = 0x80
+        when {
+            size < 126 -> output.write(maskedFlag or size)
+            size <= 0xFFFF -> {
+                output.write(maskedFlag or 126)
+                output.write((size ushr 8) and 0xFF)
+                output.write(size and 0xFF)
+            }
+            else -> {
+                output.write(maskedFlag or 127)
+                for (shift in 56 downTo 0 step 8) output.write(((size.toLong() ushr shift) and 0xFF).toInt())
+            }
+        }
+        output.write(mask)
+        output.write(ByteArray(payload.size) { i -> (payload[i].toInt() xor mask[i % 4].toInt()).toByte() })
+        output.flush()
+    }
+
     /** 服务端出向帧（不掩码，单帧 FIN）。 */
     fun write(output: OutputStream, opcode: Int, payload: ByteArray) {
         if (payload.size > MAX_PAYLOAD_BYTES) throw WsProtocolException("payload exceeds 64 KiB")
