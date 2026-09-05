@@ -125,7 +125,7 @@ final class WsDebugClient: @unchecked Sendable {
             + "Connection: Upgrade\r\n"
             + "Sec-WebSocket-Key: \(key)\r\n"
             + "Sec-WebSocket-Version: 13\r\n\r\n"
-        try writeAll(Array(request.utf8))
+        try writeAll(Data(request.utf8))
         let status = try readHttpLine()
         guard status.contains("101") else {
             throw WsError.handshakeFailed(status)
@@ -186,10 +186,10 @@ final class WsDebugClient: @unchecked Sendable {
         throw WsError.connectFailed("no address reachable")
     }
 
-    private func writeAll(_ bytes: [UInt8]) throws {
+    private func writeAll(_ bytes: Data) throws {
         var offset = 0
         while offset < bytes.count {
-            let written = bytes.withUnsafeBufferPointer { buffer -> Int in
+            let written = bytes.withUnsafeBytes { buffer -> Int in
                 send(socketFD, buffer.baseAddress! + offset, bytes.count - offset, 0)
             }
             guard written > 0 else { throw WsError.closed }
