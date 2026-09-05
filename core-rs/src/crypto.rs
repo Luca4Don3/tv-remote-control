@@ -71,7 +71,8 @@ impl DirectionCipher {
     pub fn new(key: [u8; 32]) -> Self {
         DirectionCipher {
             cipher: Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key)),
-            send_counter: 0,
+            // 加密信封 counter 从 1 开始：0 在防重放窗口中为“未收到任何消息”哨兵值
+            send_counter: 1,
         }
     }
 
@@ -82,29 +83,56 @@ impl DirectionCipher {
         *GenericArray::from_slice(&n)
     }
 
-    /// 加密（AAD 参与认证）。返回 ciphertext || tag。
-    pub fn seal(&mut self, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>, CryptoError> {
-        let nonce = Self::nonce(self.send_counter);
+    /// 加密：counter 与 extra_aad 并入加密明文体（认证绑定；旧平台 Cipher.updateAAD
+    /// 在 API 19 Dalvik/BC 不可用，故不使用 AAD 通道）。返回 counter 头 || ciphertext || tag。
+    pub fn seal(&mut self, plaintext: &[u8], extra_aad: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let counter = self.send_counter;
         self.send_counter = self
             .send_counter
             .checked_add(1)
             .ok_or(CryptoError::NonceExhausted)?;
-        self.cipher
-            .encrypt(&nonce, Payload { msg: plaintext, aad })
-            .map_err(|_| CryptoError::AuthFailed)
+        let mut body = Vec::with_capacity(8 + extra_aad.len() + plaintext.len());
+        body.extend_from_slice(&counter.to_be_bytes());
+        body.extend_from_slice(extra_aad);
+        body.extend_from_slice(plaintext);
+        let nonce = Self::nonce(counter);
+        let encrypted = self
+            .cipher
+            .encrypt(&nonce, Payload { msg: &body, aad: &[] })
+            .map_err(|_| CryptoError::AuthFailed)?;
+        let mut out = Vec::with_capacity(8 + encrypted.len());
+        out.extend_from_slice(&counter.to_be_bytes());
+        out.extend_from_slice(&encrypted);
+        Ok(out)
     }
 
-    /// 解密（计数器由调用方按对端序号维护）。
+    /// 解密（计数器由调用方按对端序号维护；内部校验加密体中的 counter/AAD）。
     pub fn open(
         &self,
         ciphertext: &[u8],
         counter: u64,
-        aad: &[u8],
+        extra_aad: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
+        if ciphertext.len() <= 8 {
+            return Err(CryptoError::Other("ciphertext too short".into()));
+        }
         let nonce = Self::nonce(counter);
-        self.cipher
-            .decrypt(&nonce, Payload { msg: ciphertext, aad })
-            .map_err(|_| CryptoError::AuthFailed)
+        let body = self
+            .cipher
+            .decrypt(&nonce, Payload { msg: &ciphertext[8..], aad: &[] })
+            .map_err(|_| CryptoError::AuthFailed)?;
+        if body.len() < 8 + extra_aad.len() {
+            return Err(CryptoError::Other("decrypted body too short".into()));
+        }
+        let mut embedded = [0u8; 8];
+        embedded.copy_from_slice(&body[..8]);
+        if u64::from_be_bytes(embedded) != counter {
+            return Err(CryptoError::Other("inner counter mismatch".into()));
+        }
+        if body[8..8 + extra_aad.len()] != *extra_aad {
+            return Err(CryptoError::Other("extra aad mismatch".into()));
+        }
+        Ok(body[8 + extra_aad.len()..].to_vec())
     }
 }
 
@@ -149,7 +177,7 @@ mod tests {
         let mut a = DirectionCipher::new([7u8; 32]);
         let b = DirectionCipher::new([7u8; 32]);
         let ct = a.seal(b"hello", b"aad1").unwrap();
-        let pt = b.open(&ct, 0, b"aad1").unwrap();
+        let pt = b.open(&ct, 1, b"aad1").unwrap();
         assert_eq!(pt, b"hello");
     }
 

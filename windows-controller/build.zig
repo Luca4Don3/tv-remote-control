@@ -25,12 +25,19 @@ pub fn build(b: *std.Build) void {
         else => false,
     };
     const is_macos_arm64 = target.result.os.tag == .macos and target.result.cpu.arch == .aarch64;
-    // CI 在 linux host 上运行 zig build test（核心逻辑为平台无关 Zig）；产品构建目标仍限 Windows/macOS
+    const is_ios = target.result.os.tag == .ios and target.result.cpu.arch == .aarch64;
+    // CI 在 linux host 上运行 zig build test（核心逻辑为平台无关 Zig）；产品构建目标仍限 Windows/macOS/iOS
     const is_linux_host = target.result.os.tag == .linux;
-    if (!is_windows and !is_macos_arm64 and !is_linux_host) {
-        @panic("supported product targets are Windows x86/x64/ARM64 and macOS ARM64");
+    if (!is_windows and !is_macos_arm64 and !is_ios and !is_linux_host) {
+        @panic("supported product targets are Windows x86/x64/ARM64, macOS ARM64 and iOS ARM64");
     }
-    const mbed = addMbedTls(b, target, optimize, is_windows);
+    // iOS 交叉编译需要 Xcode iPhoneOS SDK 的 sysroot（Zig 0.16 不自动探测 iphoneos SDK）
+    const ios_sysroot: ?[]const u8 = if (is_ios) blk: {
+        break :blk b.graph.environ_map.get("TVRC_IOS_SDK_PATH") orelse
+            @panic("iOS target requires TVRC_IOS_SDK_PATH (Xcode iPhoneOS SDK path)");
+    } else null;
+
+    const mbed = addMbedTls(b, target, optimize, is_windows, ios_sysroot);
 
     core.addIncludePath(b.path("src"));
     core.addIncludePath(b.path("include"));
@@ -38,7 +45,7 @@ pub fn build(b: *std.Build) void {
 
     const core_library = b.addLibrary(.{
         .name = "tv_remote_core",
-        .linkage = if (is_windows) .static else .dynamic,
+        .linkage = if (is_windows or is_ios) .static else .dynamic,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/abi.zig"),
             .target = target,
@@ -47,7 +54,7 @@ pub fn build(b: *std.Build) void {
             .strip = strip_product,
         }),
     });
-    configureTlsConsumer(b, core_library, mbed, is_windows);
+    configureTlsConsumer(b, core_library, mbed, is_windows, ios_sysroot);
     if (is_windows) core_library.root_module.addCSourceFile(.{
         .file = b.path("src/windows_runtime_paths.c"),
         .flags = &.{
@@ -160,7 +167,7 @@ pub fn build(b: *std.Build) void {
     }
 
     const core_tests = b.addTest(.{ .root_module = core });
-    configureTlsConsumer(b, core_tests, mbed, is_windows);
+    configureTlsConsumer(b, core_tests, mbed, is_windows, ios_sysroot);
     const run_core_tests = b.addRunArtifact(core_tests);
     const test_step = b.step("test", "Run controller core tests");
     test_step.dependOn(&run_core_tests.step);
@@ -207,6 +214,7 @@ fn addMbedTls(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     is_windows: bool,
+    ios_sysroot: ?[]const u8,
 ) MbedLibraries {
     const vendor = "vendor/mbedtls-3.6.7";
     std.Io.Dir.cwd().access(b.graph.io, vendor ++ "/include/mbedtls/version.h", .{}) catch {
@@ -215,13 +223,18 @@ fn addMbedTls(
     const include = b.path(vendor ++ "/include");
     const library = b.path(vendor ++ "/library");
     const prefix_map = b.fmt("-ffile-prefix-map={s}=.", .{b.pathFromRoot("")});
-    const flags = &.{ "-std=c11", "-D_FILE_OFFSET_BITS=64", prefix_map };
+    const flags: []const []const u8 = if (ios_sysroot) |sdk| &.{
+        "-std=c11", "-D_FILE_OFFSET_BITS=64", prefix_map, b.fmt("-isysroot{s}", .{sdk}),
+    } else &.{ "-std=c11", "-D_FILE_OFFSET_BITS=64", prefix_map };
 
     const crypto = b.addLibrary(.{
         .name = "mbedcrypto",
         .linkage = .static,
         .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .strip = optimize != .Debug }),
     });
+    if (ios_sysroot) |sdk| {
+        crypto.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) });
+    }
     crypto.root_module.addIncludePath(include);
     crypto.root_module.addIncludePath(library);
     crypto.root_module.addCSourceFiles(.{
@@ -251,6 +264,9 @@ fn addMbedTls(
         .linkage = .static,
         .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .strip = optimize != .Debug }),
     });
+    if (ios_sysroot) |sdk| {
+        x509.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) });
+    }
     x509.root_module.addIncludePath(include);
     x509.root_module.addIncludePath(library);
     x509.root_module.addCSourceFiles(.{
@@ -268,6 +284,9 @@ fn addMbedTls(
         .linkage = .static,
         .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .strip = optimize != .Debug }),
     });
+    if (ios_sysroot) |sdk| {
+        tls.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) });
+    }
     tls.root_module.addIncludePath(include);
     tls.root_module.addIncludePath(library);
     tls.root_module.addCSourceFiles(.{
@@ -291,13 +310,20 @@ fn configureTlsConsumer(
     consumer: *std.Build.Step.Compile,
     mbed: MbedLibraries,
     is_windows: bool,
+    ios_sysroot: ?[]const u8,
 ) void {
     const prefix_map = b.fmt("-ffile-prefix-map={s}=.", .{b.pathFromRoot("")});
+    const ios_flags: []const []const u8 = if (ios_sysroot) |sdk| &.{
+        "-std=c11", prefix_map, b.fmt("-isysroot{s}", .{sdk}),
+    } else &.{ "-std=c11", prefix_map };
+    if (ios_sysroot) |sdk| {
+        consumer.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) });
+    }
     consumer.root_module.addIncludePath(b.path("src"));
     consumer.root_module.addIncludePath(b.path("include"));
     consumer.root_module.addIncludePath(b.path("vendor/mbedtls-3.6.7/include"));
-    consumer.root_module.addCSourceFile(.{ .file = b.path("src/tls_client.c"), .flags = &.{ "-std=c11", prefix_map } });
-    consumer.root_module.addCSourceFile(.{ .file = b.path("src/credential_store.c"), .flags = &.{ "-std=c11", prefix_map } });
+    consumer.root_module.addCSourceFile(.{ .file = b.path("src/tls_client.c"), .flags = ios_flags });
+    consumer.root_module.addCSourceFile(.{ .file = b.path("src/credential_store.c"), .flags = ios_flags });
     consumer.root_module.linkLibrary(mbed.tls);
     consumer.root_module.linkLibrary(mbed.x509);
     consumer.root_module.linkLibrary(mbed.crypto);

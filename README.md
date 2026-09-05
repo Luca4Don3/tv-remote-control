@@ -16,6 +16,10 @@ Android TV 应用开发测试辅助工具：电视端 APK 提供安全的按键�
 
 ## 当前实现状态
 
+> 本分支（`feat/ios-controller`）：iOS 控制端（SwiftUI + Zig 核心 aarch64-ios + Rust XCFramework
+> WS 调试通道）、WS 客户端掩码帧修复（core-rs 与 Kotlin 同步）、CI iOS 门禁。
+> iOS 全部行为保持 `UNVERIFIED`（无真机证据）；WS 调试通道 UI 接入与 App Clip 骨架见 CHANGELOG 已知缺口。
+
 > 本分支（`feat/android-controller`）新增：Rust 协议核心（`core-rs`）、文本注入协议、
 > 电视端扫码配对、WebSocket 调试通道、Android 手机控制端（`android-agent/controller`）、
 > 纯 JVM 共享协议模块（`android-agent/protocol-core`）与 API 19-36 兼容矩阵（`docs/compat-matrix.md`）。

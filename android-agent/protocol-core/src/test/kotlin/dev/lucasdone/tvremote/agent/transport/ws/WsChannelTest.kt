@@ -58,6 +58,26 @@ class WsChannelTest {
     }
 
     @Test
+    fun base64EncoderMatchesRfc4648() {
+        assertEquals("", Base64.encode(ByteArray(0)))
+        assertEquals("AA==", Base64.encode(byteArrayOf(0)))
+        assertEquals("AAA=", Base64.encode(byteArrayOf(0, 0)))
+        assertEquals("AAAA", Base64.encode(byteArrayOf(0, 0, 0)))
+        // RFC 4648 测试向量
+        assertEquals("Zm9vYmFy", Base64.encode("foobar".toByteArray()))
+        assertEquals("Zm9vYmE=", Base64.encode("fooba".toByteArray()))
+        assertEquals("Zm9v", Base64.encode("foo".toByteArray()))
+    }
+
+    @Test
+    fun clientWriteRoundtripThroughServerRead() {
+        val out = java.io.ByteArrayOutputStream()
+        WsFrameCodec.writeClient(out, WsFrameCodec.OPCODE_TEXT, "masked".toByteArray())
+        val incoming = WsFrameCodec.read(java.io.ByteArrayInputStream(out.toByteArray()))!!
+        assertArrayEquals("masked".toByteArray(), incoming.payload)
+    }
+
+    @Test
     fun unmaskedClientFrameRejected() {
         val raw = byteArrayOf(0x81.toByte(), 0x05) + "hello".toByteArray()
         val stream = ByteArrayInputStream(raw)
@@ -85,7 +105,7 @@ class WsChannelTest {
         val a = DebugSessionCrypto.DirectionCipher(ByteArray(32) { 7 })
         val b = DebugSessionCrypto.DirectionCipher(ByteArray(32) { 7 })
         val sealed = a.seal("hello".toByteArray(), "aad1".toByteArray())
-        val opened = b.open(sealed, 0, "aad1".toByteArray())
+        val opened = b.open(sealed, 1, "aad1".toByteArray())
         assertArrayEquals("hello".toByteArray(), opened)
     }
 
@@ -94,7 +114,7 @@ class WsChannelTest {
         val a = DebugSessionCrypto.DirectionCipher(ByteArray(32) { 3 })
         val b = DebugSessionCrypto.DirectionCipher(ByteArray(32) { 3 })
         val sealed = a.seal("m".toByteArray())
-        org.junit.Assert.assertThrows(Exception::class.java) { b.open(sealed, 5) }
+        org.junit.Assert.assertThrows(Exception::class.java) { b.open(sealed, 7) }
     }
 
     @Test

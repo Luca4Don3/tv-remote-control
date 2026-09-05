@@ -134,8 +134,8 @@ class WebSocketDebugServer(
             Unit
         } catch (_: IOException) {
             Unit
-        } catch (_: ProtocolException) {
-            Log.w(TAG, "Rejected malformed debug channel message")
+        } catch (error: ProtocolException) {
+            Log.w(TAG, "Rejected malformed debug channel message: ${error.message}")
         } catch (error: RuntimeException) {
             Log.e(TAG, "WebSocket debug connection failed: ${error.javaClass.simpleName}")
         } finally {
@@ -247,7 +247,7 @@ class WebSocketDebugServer(
     /** 加密 ping：每 15s 向客户端发送，防死链 + 保序探活。 */
     private fun serverHelloPing(session: DebugSession): ByteArray {
         val counter = session.serverCounter
-        session.serverCounter = counter + 1
+        session.serverCounter += 1
         val envelope = ProtocolCodec.encode(
             ProtocolEnvelope(
                 protocolVersion = ProtocolCodec.VERSION,
@@ -258,7 +258,7 @@ class WebSocketDebugServer(
                 payload = jsonObject(),
             ),
         )
-        return session.serverCipher.seal(envelope, aadOf(counter))
+        return session.serverCipher.seal(envelope)
     }
 
     /** 解密一条加密信封并分发；返回 null 表示客户端断开。 */
@@ -274,6 +274,7 @@ class WebSocketDebugServer(
             throw ProtocolException("encrypted payload too short")
         }
         val counter = DebugSessionCrypto.DirectionCipher.readCounter(payload)
+        Log.i(TAG, "encrypted message: ${payload.size} bytes, counter=$counter")
         if (!session.replay.checkAndAccept(counter)) {
             throw ProtocolException("replayed or stale sequence")
         }
@@ -298,9 +299,9 @@ class WebSocketDebugServer(
             else -> throw ProtocolException("unknown debug message type: ${message.type}")
         }
         ack?.let { ackBytes ->
-            val ackCounter = session.serverCounter
-            session.serverCounter = ackCounter + 1
-            val sealed = session.serverCipher.seal(ackBytes, aadOf(ackCounter))
+            session.serverCounter += 1
+            val sealed = session.serverCipher.seal(ackBytes)
+            Log.i(TAG, "sending encrypted ack (${sealed.size} bytes)")
             WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_BINARY, sealed)
         }
         return Unit

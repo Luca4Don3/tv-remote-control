@@ -163,6 +163,13 @@ impl WsCodec {
     pub fn encode(&self, opcode: u8, payload: Vec<u8>) -> Result<Vec<u8>, FfiError> {
         Ok(encode_frame(opcode, &payload)?)
     }
+
+    /// 编码客户端出向帧（RFC 6455 强制掩码，掩码键随机生成）。
+    pub fn encode_client(&self, opcode: u8, payload: Vec<u8>) -> Result<Vec<u8>, FfiError> {
+        let mut mask = [0u8; 4];
+        crate::crypto::random_bytes(&mut mask);
+        Ok(crate::ws::encode_client_frame(opcode, &payload, &mask)?)
+    }
 }
 
 fn wire(msg: crate::ws::WsMessage) -> WsFrame {

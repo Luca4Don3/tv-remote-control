@@ -25,8 +25,11 @@ object WsFrameCodec {
     /**
      * 流式读取一条消息（自动处理分片）。返回 null 表示流结束。
      * 阻塞直到一条完整消息或对端关闭。
+     *
+     * `expectMasked`：服务端读客户端帧时 RFC 6455 强制掩码（默认）；
+     * 客户端读服务端帧时服务端出向帧不掩码，传 false。
      */
-    fun read(input: InputStream): Incoming? {
+    fun read(input: InputStream, expectMasked: Boolean = true): Incoming? {
         var firstOpcode = -1
         val fragments = StringBuilderByteSink()
         while (true) {
@@ -34,7 +37,8 @@ object WsFrameCodec {
             val fin = (header[0].toInt() and 0x80) != 0
             if ((header[0].toInt() and 0x70) != 0) throw WsProtocolException("reserved bits set")
             val opcode = header[0].toInt() and 0x0F
-            if ((header[1].toInt() and 0x80) == 0) throw WsProtocolException("client frames must be masked")
+            val masked = (header[1].toInt() and 0x80) != 0
+            if (expectMasked && !masked) throw WsProtocolException("client frames must be masked")
             var length = header[1].toInt() and 0x7F
             if (length == 126) {
                 val ext = readFully(input, 2) ?: throw EOFException("connection closed during a frame")
@@ -50,10 +54,13 @@ object WsFrameCodec {
                 length = value.toInt()
             }
             if (length > MAX_PAYLOAD_BYTES) throw WsProtocolException("payload exceeds 64 KiB")
-            val mask = readFully(input, 4) ?: throw EOFException("connection closed during a frame")
-            val masked = readFully(input, length) ?: throw EOFException("connection closed during a frame")
-            val payload = ByteArray(length)
-            for (i in 0 until length) payload[i] = (masked[i].toInt() xor mask[i % 4].toInt()).toByte()
+            val payload = if (masked) {
+                val mask = readFully(input, 4) ?: throw EOFException("connection closed during a frame")
+                val maskedPayload = readFully(input, length) ?: throw EOFException("connection closed during a frame")
+                ByteArray(length) { i -> (maskedPayload[i].toInt() xor mask[i % 4].toInt()).toByte() }
+            } else {
+                readFully(input, length) ?: throw EOFException("connection closed during a frame")
+            }
 
             when (opcode) {
                 OPCODE_CONTINUATION -> {
@@ -95,6 +102,35 @@ object WsFrameCodec {
             current = ByteArray(0)
             return out
         }
+    }
+
+    /** 客户端出向帧（RFC 6455 强制掩码，掩码键由 SecureRandom 生成）。 */
+    fun writeClient(
+        output: OutputStream,
+        opcode: Int,
+        payload: ByteArray,
+        random: java.security.SecureRandom = java.security.SecureRandom(),
+    ) {
+        if (payload.size > MAX_PAYLOAD_BYTES) throw WsProtocolException("payload exceeds 64 KiB")
+        val mask = ByteArray(4).also(random::nextBytes)
+        output.write(0x80 or opcode)
+        val size = payload.size
+        val maskedFlag = 0x80
+        when {
+            size < 126 -> output.write(maskedFlag or size)
+            size <= 0xFFFF -> {
+                output.write(maskedFlag or 126)
+                output.write((size ushr 8) and 0xFF)
+                output.write(size and 0xFF)
+            }
+            else -> {
+                output.write(maskedFlag or 127)
+                for (shift in 56 downTo 0 step 8) output.write(((size.toLong() ushr shift) and 0xFF).toInt())
+            }
+        }
+        output.write(mask)
+        output.write(ByteArray(payload.size) { i -> (payload[i].toInt() xor mask[i % 4].toInt()).toByte() })
+        output.flush()
     }
 
     /** 服务端出向帧（不掩码，单帧 FIN）。 */

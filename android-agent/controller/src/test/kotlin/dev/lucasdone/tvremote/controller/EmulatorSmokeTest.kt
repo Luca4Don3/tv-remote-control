@@ -11,6 +11,7 @@ import dev.lucasdone.tvremote.agent.protocol.jsonString
 import dev.lucasdone.tvremote.agent.protocol.requireObject
 import dev.lucasdone.tvremote.agent.protocol.requireString
 import dev.lucasdone.tvremote.controller.net.ConnectionTransport
+import dev.lucasdone.tvremote.controller.net.WsDebugClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -132,56 +133,10 @@ class EmulatorSmokeTest {
 
         val trustContext = SSLContext.getInstance("TLS")
         trustContext.init(null, arrayOf<TrustManager>(TofuTrustManager()), SecureRandom())
+        val paired = pairOnTls(trustContext)
 
-        // ===== 连接 A：配对（pair_request → pairing_sas → 确认 → credential → complete）=====
-        val pairing = freshConnection(trustContext)
-        val controllerNonce = ByteArray(32).also(SecureRandom()::nextBytes)
-        pairing.send(
-            requestId = pairing.nextRequestId(),
-            sessionId = "",
-            type = "pair_request",
-            payload = jsonObject(
-                "code" to jsonString(readPairCodeFromUi()),
-                "controllerName" to jsonString("SmokeTest"),
-                "controllerNonce" to jsonString(Hex.encode(controllerNonce)),
-            ),
-        )
-        val sas = pairing.receive() ?: throw AssertionError("pairing_sas missing")
-        println("SMOKE pairing => " + sas.type)
-        assertEquals("pairing_sas", sas.type)
-        val pairingId = sas.payload.requireString("pairingId", 32)
-        val sasCode = sas.payload.requireString("sas", 6)
-        assertTrue(Regex("\\d{6}").matches(sasCode))
-
-        // 电视端用户确认：SAS 对话框按钮位置固定（320x640 AVD），
-        // 直接 tap——不使用 uiautomator dump（UiAutomation 连接会抑制无障碍服务）
-        Thread.sleep(1500)
-        adbShell("input", "tap", "228", "418")
-        Thread.sleep(1000)
-        val credential = pairing.receive() ?: throw AssertionError("pair_credential missing")
-        assertEquals("pair_credential", credential.type)
-        val controllerId = credential.payload.requireString("controllerId", 32)
-        val secret = Hex.decode(credential.payload.requireString("secret", 64))
-        assertEquals(32, controllerId.length)
-        assertEquals(32, secret.size)
-        val ack = pairing.send(
-            requestId = pairing.nextRequestId(),
-            sessionId = "",
-            type = "pair_store_ack",
-            payload = jsonObject(
-                "pairingId" to jsonString(pairingId),
-                "controllerId" to jsonString(controllerId),
-            ),
-        )
-        val complete = pairing.receive() ?: throw AssertionError("pair_complete missing")
-        assertEquals("pair_complete", complete.type)
-        assertEquals(controllerId, complete.payload.requireString("controllerId", 32))
-        val tvFingerprint = pairing.peerFingerprint
-        pairing.close()
-
-        // ===== 连接 B：认证（auth_begin 必须为连接首条消息）=====
         val session = ControllerSession { freshConnection(trustContext) }
-        val capabilities = session.authenticate(controllerId, secret, tvFingerprint)
+        val capabilities = session.authenticate(paired.controllerId, paired.secret, paired.tvCertificateFingerprint)
         assertTrue(capabilities.keySupport.containsKey("DPAD_DOWN"))
 
         // 阶段四：遥控按键 ACK（断言与能力语义对齐）
@@ -207,15 +162,54 @@ class EmulatorSmokeTest {
         session.close()
     }
 
-    /** 从电视 UI 抓取当前配对码（仅读文本，不触发 UiAutomation 连接抑制）。 */
-    private fun readPairCodeFromUi(): String {
-        adbShell("am", "startservice", "-a", "dev.lucasdone.tvremote.agent.OPEN_PAIRING", "-n", agentComponent)
+    /** WS 调试通道互操作：掩码帧经 agent 服务端校验 → 密钥派生 → WS 通道遥控真实执行。 */
+    @Test
+    fun wsDebugChannelInterop() {
+        assumeTrue(adbDeviceConnected())
+        adbShell("pm", "clear", "dev.lucasdone.tvremote.agent.debug")
+        Thread.sleep(2000)
+        adbShell("am", "startservice",
+            "-n", "dev.lucasdone.tvremote.agent.debug/dev.lucasdone.tvremote.agent.service.AgentService")
+        Thread.sleep(4000)
+        adbShell("am", "start", "-n", "dev.lucasdone.tvremote.agent.debug/dev.lucasdone.tvremote.agent.MainActivity")
+        Thread.sleep(3000)
+
+        val trustContext = SSLContext.getInstance("TLS")
+        trustContext.init(null, arrayOf<TrustManager>(TofuTrustManager()), SecureRandom())
+        val paired = pairOnTls(trustContext)
+
+        // 经 adb forward 把模拟器 47833 映射到主机（forward 是 adb 主机命令，非 shell 命令）
+        ProcessBuilder(listOf("/opt/android-sdk/platform-tools/adb", "forward", "tcp:17833", "tcp:47833"))
+            .redirectErrorStream(true).start().waitFor()
+        val client = WsDebugClient("127.0.0.1", paired.controllerId, paired.secret, 17833)
+        try {
+            // 掩码帧 + ws_hello + 应用层加密链路：WS 通道 key_event 真实执行
+            val keyAck = client.sendKeyEvent(key = "BACK", state = "PRESS")
+            println("SMOKE ws back => $keyAck")
+            assertTrue(keyAck)
+            val textAck = client.sendText("ws", draft = false)
+            println("SMOKE ws text => $textAck")
+            // MainActivity 无输入框，文本注入预期 UNSUPPORTED（能力协商语义）；
+            // 链路验证以命令往返完成（不抛异常）为准
+            Unit
+        } finally {
+            client.close()
+        }
+    }
+
+    /** 测试即时开配对窗口并从电视 UI 抓取当前配对码（窗口 TTL 120s，随测试开启）。 */
+    private fun openPairingWindow(): String {
+        val adb = listOf("/opt/android-sdk/platform-tools/adb")
+        adbShell(
+            "am", "startservice", "-a", "dev.lucasdone.tvremote.agent.OPEN_PAIRING",
+            "-n", "dev.lucasdone.tvremote.agent.debug/dev.lucasdone.tvremote.agent.service.AgentService",
+        )
         Thread.sleep(3000)
         repeat(10) {
             adbShell("uiautomator", "dump", "/data/local/tmp/code.xml")
-            val pull = ProcessBuilder(adb + listOf("pull", "/data/local/tmp/code.xml", "/tmp/opencode/code.xml"))
+            val pulled = ProcessBuilder(adb + listOf("pull", "/data/local/tmp/code.xml", "/tmp/opencode/code.xml"))
                 .redirectErrorStream(true).start().waitFor()
-            if (pull == 0) {
+            if (pulled == 0) {
                 val xml = java.io.File("/tmp/opencode/code.xml").readText()
                 val match = Regex("配对码[：:]&#?[0-9a-fA-F]*;?([0-9]{6})").find(xml)
                     ?: Regex("配对码[：:]([0-9]{6})").find(xml)
@@ -229,6 +223,61 @@ class EmulatorSmokeTest {
         }
         throw AssertionError("未能从电视 UI 抓取配对码")
     }
+
+    /** TLS 主链路完整配对：pair_request → SAS（tap 确认）→ credential → store_ack → complete。 */
+    private fun pairOnTls(trustContext: SSLContext): PairedResult {
+        val code = openPairingWindow()
+        val pairing = freshConnection(trustContext)
+        val controllerNonce = ByteArray(32).also(SecureRandom()::nextBytes)
+        pairing.send(
+            requestId = pairing.nextRequestId(),
+            sessionId = "",
+            type = "pair_request",
+            payload = jsonObject(
+                "code" to jsonString(code),
+                "controllerName" to jsonString("SmokeTest"),
+                "controllerNonce" to jsonString(Hex.encode(controllerNonce)),
+            ),
+        )
+        val sas = pairing.receive() ?: throw AssertionError("pairing_sas missing")
+        println("SMOKE pairing => " + sas.type)
+        assertEquals("pairing_sas", sas.type)
+        val pairingId = sas.payload.requireString("pairingId", 32)
+        assertTrue(Regex("\\d{6}").matches(sas.payload.requireString("sas", 6)))
+
+        // SAS 对话框按钮位置固定（320x640 AVD）；tap 确认
+        Thread.sleep(1500)
+        adbShell("input", "tap", "228", "418")
+        Thread.sleep(1000)
+
+        val credential = pairing.receive() ?: throw AssertionError("pair_credential missing")
+        assertEquals("pair_credential", credential.type)
+        val controllerId = credential.payload.requireString("controllerId", 32)
+        val secret = Hex.decode(credential.payload.requireString("secret", 64))
+        assertEquals(32, controllerId.length)
+        assertEquals(32, secret.size)
+        pairing.send(
+            requestId = pairing.nextRequestId(),
+            sessionId = "",
+            type = "pair_store_ack",
+            payload = jsonObject(
+                "pairingId" to jsonString(pairingId),
+                "controllerId" to jsonString(controllerId),
+            ),
+        )
+        val complete = pairing.receive() ?: throw AssertionError("pair_complete missing")
+        assertEquals("pair_complete", complete.type)
+        assertEquals(controllerId, complete.payload.requireString("controllerId", 32))
+        val tvFingerprint = pairing.peerFingerprint
+        pairing.close()
+        return PairedResult(controllerId, secret, tvFingerprint)
+    }
+
+    internal data class PairedResult(
+        val controllerId: String,
+        val secret: ByteArray,
+        val tvCertificateFingerprint: ByteArray,
+    )
 
     /** uiautomator dump 的 UiAutomation 连接会抑制无障碍服务；抓码后立即恢复绑定。 */
     private fun restoreAccessibility() {

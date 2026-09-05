@@ -62,8 +62,8 @@ class WsDebugClient(
                 ),
             ),
         )
-        WsFrameCodec.writeText(socket.outputStream, String(hello, Charsets.UTF_8))
-        val ackFrame = WsFrameCodec.read(socket.inputStream) ?: throw IOException("closed during hello")
+        WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_TEXT, hello)
+        val ackFrame = WsFrameCodec.read(socket.inputStream, expectMasked = false) ?: throw IOException("closed during hello")
         val ack = ProtocolCodec.decode(ackFrame.payload)
         if (ack.type != "ws_hello_ack") throw IOException("unexpected handshake reply: ${ack.type}")
         val serverRandom = Hex.decode(ack.payload.requireString("serverRandom", 64))
@@ -110,15 +110,16 @@ class WsDebugClient(
         )
         val sealed = synchronized(writeLock) {
             val cipher = clientCipher ?: throw IllegalStateException("not ready")
-            val counter = outboundSequence
             outboundSequence += 1
-            cipher.seal(message, aad(counter))
+            cipher.seal(message)
         }
-        WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_BINARY, sealed)
+        WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_BINARY, sealed)
         while (true) {
-            val frame = WsFrameCodec.read(socket.inputStream) ?: throw IOException("connection closed")
+            val frame = WsFrameCodec.read(socket.inputStream, expectMasked = false) ?: run { println("SMOKE ws read => null EOF"); throw IOException("connection closed") }
+            println("SMOKE ws read => opcode=" + frame.opcode + " len=" + frame.payload.size)
             if (frame.opcode == WsFrameCodec.OPCODE_PING) {
-                WsFrameCodec.writePong(socket.outputStream, frame.payload)
+                // 客户端→服务端方向必须掩码（服务端硬校验）；writePong 是服务端出向帧
+                WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_PONG, frame.payload)
                 continue
             }
             if (frame.opcode != WsFrameCodec.OPCODE_BINARY) continue
@@ -139,7 +140,7 @@ class WsDebugClient(
     /** HTTP 升级握手（Sec-WebSocket-Key = 随机 16B base64）。 */
     private fun upgrade() {
         val keyBytes = ByteArray(16).also(random::nextBytes)
-        val key = android.util.Base64.encodeToString(keyBytes, android.util.Base64.NO_WRAP)
+        val key = dev.lucasdone.tvremote.agent.transport.ws.Base64.encode(keyBytes, withPadding = false)
         val request = (
             "GET / HTTP/1.1\r\n" +
                 "Host: ${socket.inetAddress.hostAddress}\r\n" +
@@ -160,9 +161,6 @@ class WsDebugClient(
     }
 
     private fun nextRequestId(): String = "c-${System.nanoTime()}"
-
-    private fun aad(counter: Long): ByteArray =
-        ByteArray(8).also { buf -> for (i in 0 until 8) buf[i] = (counter ushr ((7 - i) * 8)).toByte() }
 
     override fun close() {
         heartbeat.shutdownNow()
