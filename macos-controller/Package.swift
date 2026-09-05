@@ -3,7 +3,8 @@ import PackageDescription
 
 let package = Package(
     name: "TVRemoteCoreLogic",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v13),
+        .iOS(.v16)],
     products: [.library(name: "TVRemoteCoreLogic", targets: ["TVRemoteCoreLogic"])],
     targets: [
         .target(name: "TVRemoteCoreLogic"),
