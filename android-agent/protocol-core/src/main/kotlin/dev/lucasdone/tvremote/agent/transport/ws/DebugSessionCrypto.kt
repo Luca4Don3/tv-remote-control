@@ -6,6 +6,7 @@ import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
@@ -72,37 +73,75 @@ object DebugSessionCrypto {
      */
     class DirectionCipher(key: ByteArray) {
         private val keySpec = SecretKeySpec(key, "AES")
-        private var sendCounter = 0L
+        // 加密信封 counter 从 1 开始：0 在防重放窗口中为“未收到任何消息”哨兵值
+        private var sendCounter = 1L
 
         @Synchronized
-        fun seal(plaintext: ByteArray, aad: ByteArray = ByteArray(0)): ByteArray {
+        fun seal(plaintext: ByteArray, extraAad: ByteArray = ByteArray(0)): ByteArray {
             if (sendCounter == Long.MAX_VALUE) throw IllegalStateException("nonce exhausted")
             val counter = sendCounter
             sendCounter += 1
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, keySpec, GCMParameterSpec(128, nonce(counter)))
-            if (aad.isNotEmpty()) cipher.updateAAD(aad)
-            val body = cipher.doFinal(plaintext)
-            val out = ByteArray(COUNTER_BYTES + body.size)
-            for (i in 0 until COUNTER_BYTES) out[i] = (counter ushr ((7 - i) * 8)).toByte()
-            System.arraycopy(body, 0, out, COUNTER_BYTES, body.size)
+            initGcm(cipher, Cipher.ENCRYPT_MODE, nonce(counter))
+            // counter 与 extraAad 并入加密明文体（认证绑定）：
+            // API 19 Dalvik/BC 的 Cipher.updateAAD 抛 UnsupportedOperationException，不可用
+            val body = ByteArray(COUNTER_BYTES + extraAad.size + plaintext.size)
+            writeCounter(body, 0, counter)
+            System.arraycopy(extraAad, 0, body, COUNTER_BYTES, extraAad.size)
+            System.arraycopy(plaintext, 0, body, COUNTER_BYTES + extraAad.size, plaintext.size)
+            val encrypted = cipher.doFinal(body)
+            val out = ByteArray(COUNTER_BYTES + encrypted.size)
+            writeCounter(out, 0, counter)
+            System.arraycopy(encrypted, 0, out, COUNTER_BYTES, encrypted.size)
             return out
         }
 
-        /** 解密（对端计数器由调用方经防重放窗口校验后传入）。 */
-        fun open(envelope: ByteArray, counter: Long, aad: ByteArray = ByteArray(0)): ByteArray {
+        /** 解密（对端计数器由调用方经防重放窗口校验后传入；内部校验加密体中的 counter/AAD）。 */
+        fun open(envelope: ByteArray, counter: Long, extraAad: ByteArray = ByteArray(0)): ByteArray {
             if (envelope.size <= COUNTER_BYTES + 16) throw WsFrameCodec.WsProtocolException("ciphertext too short")
             val embedded = readCounter(envelope)
             if (embedded != counter) throw WsFrameCodec.WsProtocolException("counter mismatch")
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, keySpec, GCMParameterSpec(128, nonce(counter)))
-            if (aad.isNotEmpty()) cipher.updateAAD(aad)
-            return cipher.doFinal(envelope, COUNTER_BYTES, envelope.size - COUNTER_BYTES)
+            initGcm(cipher, Cipher.DECRYPT_MODE, nonce(counter))
+            val body = cipher.doFinal(envelope, COUNTER_BYTES, envelope.size - COUNTER_BYTES)
+            if (body.size < COUNTER_BYTES + extraAad.size) {
+                throw WsFrameCodec.WsProtocolException("decrypted body too short")
+            }
+            var expected = 0L
+            for (i in 0 until COUNTER_BYTES) expected = (expected shl 8) or (body[i].toLong() and 0xFF)
+            if (expected != counter) throw WsFrameCodec.WsProtocolException("inner counter mismatch")
+            if (extraAad.isNotEmpty()) {
+                for (i in extraAad.indices) {
+                    if (body[COUNTER_BYTES + i] != extraAad[i]) {
+                        throw WsFrameCodec.WsProtocolException("extra aad mismatch")
+                    }
+                }
+            }
+            return body.copyOfRange(COUNTER_BYTES + extraAad.size, body.size)
+        }
+
+        private fun initGcm(cipher: Cipher, mode: Int, nonce: ByteArray) {
+            try {
+                cipher.init(mode, keySpec, GCMParameterSpec(128, nonce))
+            } catch (primary: Exception) {
+                // API 19-20 Dalvik/BC：不识别 GCMParameterSpec，回退 IvParameterSpec（默认 tag 128）
+                try {
+                    cipher.init(mode, keySpec, IvParameterSpec(nonce))
+                } catch (fallback: Exception) {
+                    throw WsFrameCodec.WsProtocolException(
+                        "GCM init failed: primary=$primary fallback=$fallback"
+                    )
+                }
+            }
         }
 
         companion object {
             fun nonce(counter: Long): ByteArray = ByteArray(12).also { n ->
                 for (i in 0 until COUNTER_BYTES) n[4 + i] = (counter ushr ((7 - i) * 8)).toByte()
+            }
+
+            fun writeCounter(target: ByteArray, offset: Int, counter: Long) {
+                for (i in 0 until COUNTER_BYTES) target[offset + i] = (counter ushr ((7 - i) * 8)).toByte()
             }
 
             fun readCounter(envelope: ByteArray): Long {
