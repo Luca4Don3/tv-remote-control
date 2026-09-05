@@ -143,8 +143,8 @@ final class WsDebugClient: @unchecked Sendable {
         let helloFrame = try wsCodec.encodeClient(opcode: 1, payload: Data(hello.utf8))
         try writeAll(helloFrame)
         let ackFrame = try readFrame()
+        let text = String(decoding: ackFrame.payload, as: UTF8.self)
         guard ackFrame.opcode == 1,
-              let text = String(decoding: ackFrame.payload, as: UTF8.self),
               let range = text.range(of: "\"serverRandom\":\""),
               let end = text[range.upperBound...].firstIndex(of: "\"") else {
             throw WsError.handshakeFailed("ws_hello_ack missing serverRandom")
@@ -236,7 +236,7 @@ final class WsDebugClient: @unchecked Sendable {
 
     private static func closeSocketFd(_ fd: Int32) {
         guard fd >= 0 else { return }
-        close(fd)
+        _ = Darwin.close(fd)
     }
 
     // MARK: - 工具
