@@ -2131,3 +2131,11 @@ test "empty media queue is not found rather than unsupported" {
     var payload: [1]u8 = undefined;
     try std.testing.expectEqual(Result.not_found, tvrc_media_read(raw, &packet, &payload, payload.len));
 }
+
+/// 128-bit float 链接胶水（Apple 平台）。
+/// Zig std 的 f128 路径（std.fmt.parseFloat / std.json innerParse）引用
+/// musl 风格 C 接口 roundq；Apple libSystem 不提供（compiler-rt 仅覆盖
+/// __*tf2 内建）。此 export 以 Zig 原生 f128 实现补位，macOS/iOS 一并生效。
+export fn roundq(x: f128) callconv(.c) f128 {
+    return @round(x);
+}

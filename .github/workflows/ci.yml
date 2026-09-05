@@ -178,7 +178,6 @@ jobs:
             -L core-rs/target/aarch64-apple-ios/release -ltvremote_core \
             -L "$(dirname "$(find "$(xcrun -sdk iphoneos --show-sdk-path)/usr/lib" -name "libclang_rt.ios.a" | head -1)")" \
             -lclang_rt.ios \
-            ios-controller/Stubs/cfloat128_stubs.c \
             -framework SwiftUI -framework UIKit \
             -o "${RUNNER_TEMP}/TVRemoteController-ios-sim"
           file "${RUNNER_TEMP}/TVRemoteController-ios-sim"
