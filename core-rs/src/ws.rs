@@ -151,6 +151,28 @@ impl WsDecoder {
     }
 }
 
+/// 客户端出向帧编码（RFC 6455 要求客户端→服务端帧必须掩码，掩码键由调用方提供）。
+pub fn encode_client_frame(opcode: u8, payload: &[u8], mask: &[u8; 4]) -> Result<Vec<u8>, WsError> {
+    if payload.len() > MAX_WS_PAYLOAD {
+        return Err(WsError::TooLarge);
+    }
+    let mut out = Vec::with_capacity(payload.len() + 14);
+    out.push(0x80 | opcode);
+    let len = payload.len();
+    if len < 126 {
+        out.push(0x80 | len as u8);
+    } else if len <= u16::MAX as usize {
+        out.push(0x80 | 126);
+        out.extend_from_slice(&(len as u16).to_be_bytes());
+    } else {
+        out.push(0x80 | 127);
+        out.extend_from_slice(&(len as u64).to_be_bytes());
+    }
+    out.extend_from_slice(mask);
+    out.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+    Ok(out)
+}
+
 /// 服务端出向帧编码（不掩码）。
 pub fn encode_frame(opcode: u8, payload: &[u8]) -> Result<Vec<u8>, WsError> {
     if payload.len() > MAX_WS_PAYLOAD {
@@ -255,6 +277,23 @@ mod tests {
         let frame = mask_frame(OPCODE_PING, b"x", true);
         let mut dec = WsDecoder::new();
         assert_eq!(dec.push(&frame).unwrap().unwrap(), WsMessage::Ping(vec![b'x']));
+    }
+
+    #[test]
+    fn client_masked_frame_roundtrip() {
+        let mask = [0xAB, 0xCD, 0xEF, 0x12];
+        let frame = encode_client_frame(OPCODE_TEXT, b"masked", &mask).unwrap();
+        // 服务端解码器必须能解客户端掩码帧（互操作锚点）
+        let mut dec = WsDecoder::new();
+        let msg = dec.push(&frame).unwrap().unwrap();
+        assert_eq!(msg, WsMessage::Text("masked".into()));
+        // 掩码位必须置位
+        assert_ne!(frame[1] & 0x80, 0);
+        // 扩展长度也带掩码
+        let big = encode_client_frame(OPCODE_BINARY, &vec![0u8; 300], &mask).unwrap();
+        let mut dec2 = WsDecoder::new();
+        let msg2 = dec2.push(&big).unwrap().unwrap();
+        assert_eq!(msg2, WsMessage::Binary(vec![0u8; 300]));
     }
 
     #[test]
