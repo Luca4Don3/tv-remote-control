@@ -264,6 +264,9 @@ fn addMbedTls(
         .linkage = .static,
         .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .strip = optimize != .Debug }),
     });
+    if (ios_sysroot) |sdk| {
+        x509.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) });
+    }
     x509.root_module.addIncludePath(include);
     x509.root_module.addIncludePath(library);
     x509.root_module.addCSourceFiles(.{
@@ -281,6 +284,9 @@ fn addMbedTls(
         .linkage = .static,
         .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .strip = optimize != .Debug }),
     });
+    if (ios_sysroot) |sdk| {
+        tls.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) });
+    }
     tls.root_module.addIncludePath(include);
     tls.root_module.addIncludePath(library);
     tls.root_module.addCSourceFiles(.{
