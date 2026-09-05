@@ -347,6 +347,7 @@ struct TVRemoteApp: App {
     }
 }
 
+@MainActor
 struct ContentView: View {
     @StateObject private var model = ControllerModel()
 
@@ -380,6 +381,7 @@ struct ContentView: View {
     }
 }
 
+@MainActor
 struct RemoteKeypad: View {
     @ObservedObject var model: ControllerModel
 
