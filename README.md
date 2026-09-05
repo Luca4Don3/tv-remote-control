@@ -16,15 +16,12 @@ Android TV 应用开发测试辅助工具：电视端 APK 提供安全的按键�
 
 ## 当前实现状态
 
-> 本分支（`feat/ios-controller`）：iOS 控制端（SwiftUI + Zig 核心 aarch64-ios + Rust XCFramework
-> WS 调试通道）、WS 客户端掩码帧修复（core-rs 与 Kotlin 同步）、CI iOS 门禁。
-> iOS 全部行为保持 `UNVERIFIED`（无真机证据）；WS 调试通道 UI 接入与 App Clip 骨架见 CHANGELOG 已知缺口。
-
-> 本分支（`feat/android-controller`）新增：Rust 协议核心（`core-rs`）、文本注入协议、
-> 电视端扫码配对、WebSocket 调试通道、Android 手机控制端（`android-agent/controller`）、
-> 纯 JVM 共享协议模块（`android-agent/protocol-core`）与 API 19-36 兼容矩阵（`docs/compat-matrix.md`）。
-> 详见 CHANGELOG 的 Unreleased 段落。新增硬件相关行为（WS 通道真机、扫码配对真机、
-> 手机控制端真机）保持 `UNVERIFIED`。
+> 已合入 main：Rust 协议核心（`core-rs`）、文本注入协议、电视端扫码配对、WebSocket
+> 调试通道（应用层加密，模拟器端到端冒烟通过）、Android 手机控制端（`android-agent/controller`）、
+> 纯 JVM 共享协议模块（`android-agent/protocol-core`）、API 19-36 兼容矩阵
+> （`docs/compat-matrix.md`）与 iOS 控制端（SwiftUI + Zig 核心 aarch64-ios + Rust XCFramework + WS 客户端）。
+> iOS 行为全部保持 `UNVERIFIED`（无真机证据）；Android 硬件相关行为（WS 通道真机、
+> 扫码配对真机、手机控制端真机）同样保持 `UNVERIFIED`。详见 CHANGELOG Unreleased 段落。
 
 已实现：
 
@@ -52,6 +49,27 @@ cd ../android-agent
 cd ..
 ./scripts/run-quality-gates.sh
 ```
+
+### iOS 本地构建（macOS + Xcode）
+
+iOS 协议核心由 Zig 交叉编译（`aarch64-ios` 静态库）。Zig 0.16 不自动探测
+Xcode SDK，**必须显式注入 iPhoneOS SDK 路径**：
+
+```bash
+cd windows-controller
+TVRC_IOS_SDK_PATH="$(xcrun -sdk iphoneos --show-sdk-path)" zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-ios --prefix /tmp/tvrc-ios-core
+```
+
+- `TVRC_IOS_SDK_PATH` 未设置时构建会直接 panic（有意的显式失败）。
+- 静态库引用 f128 软浮点符号（`__divtf3`/`roundq` 族）；Apple compiler-rt 剔除了
+  fp128 实现，构建已捆绑 Zig 自带 compiler_rt——外部 `swiftc` 链接无需额外
+  compiler-rt 库。
+- Rust 侧静态库（`libtvremote_core.a`）需 `cargo build --release
+  --target aarch64-apple-ios`；Swift 绑定与 modulemap 见 `core-rs/bindings/swift/`。
+- CI 的完整链接门禁（SwiftUI + Zig 核心 + mbedTLS + Rust 核心 → iOS 设备可执行）
+  见 `.github/workflows/ci.yml` 的 `iOS full link gate` 步骤，本地复现以该命令为准。
+- Android 冒烟测试的 adb 路径可用 `TVRC_ADB` 覆盖（默认
+  `/opt/android-sdk/platform-tools/adb`）。
 
 正式 Android 发布使用仓库外签名材料，并执行 `scripts/package-android-release.sh`。桌面本地打包使用 `scripts/package-local.sh`。两个入口都要求 `TVRC_SECURITY_AUDIT_SCANNER=<absolute_scanner_path>`，且离线审计 exit 0 后才会构建；依赖、ZIP、APK 和 checksum 均先写入项目 `.temp/`，全部门禁通过后才进入 `.artifacts/`。版本只从根目录 `VERSION` 读取，格式为 `major.minor.patch` 或 `major.minor-rcN`。
 
