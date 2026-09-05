@@ -4,6 +4,12 @@ This project follows `major.minor.patch` releases and `major.minor-rcN` release 
 
 ## Unreleased
 
+- Added the iOS controller on the `feat/ios-controller` branch: SwiftUI shell reusing the Zig protocol core cross-compiled to `aarch64-ios` (TOFU/SAS/pin pairing and authentication state machines fully shared with macOS/Windows), a Rust XCFramework (`tvremote_core`) consuming uniffi bindings for the WebSocket debug channel (HKDF/AES-GCM session crypto, client masked frames via `WsCodec.encodeClient`, 15s heartbeat), and Keychain credential storage reused from the macOS controller.
+- Fixed the WebSocket client masked-frame gap on both Rust and Kotlin sides: client-to-server frames are now RFC 6455 masked (`WsCodec.encodeClient` / `WsFrameCodec.writeClient`); unmasked client frames were rejected by the agent's server-side decoder.
+- Added CI gates for iOS: Rust static libraries (aarch64-ios/ios-sim) packaged into an XCFramework, Zig core cross-build for `aarch64-ios` with explicit iPhoneOS SDK sysroot, and swiftc typecheck of the SwiftUI shell + Rust FFI bindings on the simulator SDK.
+- Added `TVRemoteCoreLogic` SPM package availability on iOS 16 for cross-Apple-platform reuse.
+- Known gaps (documented, not blocking): the iOS WS debug channel UI hookup awaits a C-core ABI to expose the active credential id (PSK chain); the App Clip target requires an Xcode project (certificate/entitlements) and is deferred to the packaging phase; all iOS behavior is UNVERIFIED pending real-device evidence.
+
 - Added a Rust protocol core (`core-rs`): framing aligned with the Kotlin `FrameCodec`, strict JSON matching `StrictJson`, HKDF-SHA256 + AES-256-GCM session crypto with direction separation, replay-window sequence protection, a minimal RFC 6455 WebSocket frame codec, and uniffi FFI bindings verified through cargo-ndk cross builds for all four Android ABIs.
 - Added the `text_commit` / `text_draft` protocol with AccessibilityService text injection (`ACTION_SET_TEXT`, API 21+), a new `textInput` capability bit, and a dedicated text command dispatcher with strictly increasing sequences.
 - Added QR pairing: a one-time 60-second token displayed as a `tvrc://pair` QR code on the TV replaces manual code entry without changing the SAS verification flow.
