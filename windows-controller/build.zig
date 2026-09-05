@@ -25,10 +25,11 @@ pub fn build(b: *std.Build) void {
         else => false,
     };
     const is_macos_arm64 = target.result.os.tag == .macos and target.result.cpu.arch == .aarch64;
-    // CI 在 linux host 上运行 zig build test（核心逻辑为平台无关 Zig）；产品构建目标仍限 Windows/macOS
+    const is_ios = target.result.os.tag == .ios and target.result.cpu.arch == .aarch64;
+    // CI 在 linux host 上运行 zig build test（核心逻辑为平台无关 Zig）；产品构建目标仍限 Windows/macOS/iOS
     const is_linux_host = target.result.os.tag == .linux;
-    if (!is_windows and !is_macos_arm64 and !is_linux_host) {
-        @panic("supported product targets are Windows x86/x64/ARM64 and macOS ARM64");
+    if (!is_windows and !is_macos_arm64 and !is_ios and !is_linux_host) {
+        @panic("supported product targets are Windows x86/x64/ARM64, macOS ARM64 and iOS ARM64");
     }
     const mbed = addMbedTls(b, target, optimize, is_windows);
 
@@ -38,7 +39,7 @@ pub fn build(b: *std.Build) void {
 
     const core_library = b.addLibrary(.{
         .name = "tv_remote_core",
-        .linkage = if (is_windows) .static else .dynamic,
+        .linkage = if (is_windows or is_ios) .static else .dynamic,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/abi.zig"),
             .target = target,
