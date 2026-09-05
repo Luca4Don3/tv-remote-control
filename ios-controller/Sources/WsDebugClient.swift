@@ -49,7 +49,7 @@ final class WsDebugClient: @unchecked Sendable {
                 replayWindowBits: 64
             )
         } catch {
-            closeSocket(socketFD)
+            Self.closeSocketFd(socketFD)
             throw error
         }
         // 15s 加密心跳保活（agent 读超时 45s）
@@ -64,7 +64,7 @@ final class WsDebugClient: @unchecked Sendable {
 
     func close() {
         heartbeat?.cancel()
-        closeSocket(socketFD)
+        Self.closeSocketFd(socketFD)
     }
 
     // MARK: - 遥控/文本命令（加密信封）
@@ -223,18 +223,18 @@ final class WsDebugClient: @unchecked Sendable {
             let n = try readChunk(into: &chunk)
             header.append(contentsOf: chunk.prefix(n))
         }
-        var frames = try wsCodec.push(chunk: header)
+        var frames = try wsCodec.push(chunk: Data(header))
         var chunk = [UInt8](repeating: 0, count: 1024)
         while frames.isEmpty {
             let n = try readChunk(into: &chunk)
-            frames = try wsCodec.push(chunk: Array(chunk.prefix(n)))
+            frames = try wsCodec.push(chunk: Data(chunk.prefix(n)))
         }
         let frame = frames[0]
         if frame.opcode == 8 { throw WsError.closed }
         return (frame.opcode, frame.payload)
     }
 
-    private func closeSocket(_ fd: Int32) {
+    private static func closeSocketFd(_ fd: Int32) {
         guard fd >= 0 else { return }
         close(fd)
     }
@@ -271,7 +271,3 @@ final class WsDebugClient: @unchecked Sendable {
     }
 }
 
-private func closeSocket(_ fd: Int32) {
-    guard fd >= 0 else { return }
-    close(fd)
-}
