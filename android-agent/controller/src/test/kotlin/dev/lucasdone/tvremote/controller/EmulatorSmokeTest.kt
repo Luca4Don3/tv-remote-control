@@ -82,7 +82,13 @@ class EmulatorSmokeTest {
         }
     }
 
-    private val adb = listOf("/opt/android-sdk/platform-tools/adb")
+    /** adb 路径可用 TVRC_ADB 覆盖（默认与本仓库 CI/Linux 环境一致）。 */
+    private val adb = listOf(System.getenv("TVRC_ADB") ?: "/opt/android-sdk/platform-tools/adb")
+
+    /** 主机侧转发端口（adb forward tcp:<forwarded> tcp:<agent>），与模拟器 agent 端口解耦。 */
+    private val hostTlsPort = 17832
+    private val hostWsPort = 17833
+    private val agentWsPort = 47833
     private val agentComponent = "dev.lucasdone.tvremote.agent.debug/dev.lucasdone.tvremote.agent.service.AgentService"
 
     /** 仅当 adb 可用且有已授权设备时返回 true（CI 无设备 → assume 跳过）。 */
@@ -105,7 +111,7 @@ class EmulatorSmokeTest {
     private fun freshConnection(context: SSLContext): AdbSocketTransport {
         val raw = context.socketFactory.createSocket() as SSLSocket
         raw.tcpNoDelay = true
-        raw.connect(java.net.InetSocketAddress("127.0.0.1", 17832), 10_000)
+        raw.connect(java.net.InetSocketAddress("127.0.0.1", hostTlsPort), 10_000)
         raw.soTimeout = 45_000
         raw.enabledProtocols = raw.supportedProtocols.filter { it == "TLSv1.2" || it == "TLSv1.3" }.toTypedArray()
         raw.startHandshake()
@@ -178,10 +184,10 @@ class EmulatorSmokeTest {
         trustContext.init(null, arrayOf<TrustManager>(TofuTrustManager()), SecureRandom())
         val paired = pairOnTls(trustContext)
 
-        // 经 adb forward 把模拟器 47833 映射到主机（forward 是 adb 主机命令，非 shell 命令）
-        ProcessBuilder(listOf("/opt/android-sdk/platform-tools/adb", "forward", "tcp:17833", "tcp:47833"))
+        // 经 adb forward 把模拟器 agent 端口映射到主机（forward 是 adb 主机命令，非 shell 命令）
+        ProcessBuilder(adb + listOf("forward", "tcp:$hostWsPort", "tcp:$agentWsPort"))
             .redirectErrorStream(true).start().waitFor()
-        val client = WsDebugClient("127.0.0.1", paired.controllerId, paired.secret, 17833)
+        val client = WsDebugClient("127.0.0.1", paired.controllerId, paired.secret, hostWsPort)
         try {
             // 掩码帧 + ws_hello + 应用层加密链路：WS 通道 key_event 真实执行
             val keyAck = client.sendKeyEvent(key = "BACK", state = "PRESS")
@@ -199,7 +205,6 @@ class EmulatorSmokeTest {
 
     /** 测试即时开配对窗口并从电视 UI 抓取当前配对码（窗口 TTL 120s，随测试开启）。 */
     private fun openPairingWindow(): String {
-        val adb = listOf("/opt/android-sdk/platform-tools/adb")
         adbShell(
             "am", "startservice", "-a", "dev.lucasdone.tvremote.agent.OPEN_PAIRING",
             "-n", "dev.lucasdone.tvremote.agent.debug/dev.lucasdone.tvremote.agent.service.AgentService",
