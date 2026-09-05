@@ -7,7 +7,7 @@ description = "TV Remote core protocol: framing, crypto, pairing"
 license = "Apache-2.0"
 
 [lib]
-crate-type = ["cdylib", "lib"]
+crate-type = ["cdylib", "lib", "staticlib"]
 
 [dependencies]
 aes-gcm = "0.10"
