@@ -128,12 +128,14 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/tvrc-ios-bindings"
           cp core-rs/bindings/swift/tvremote_core.swift "${RUNNER_TEMP}/tvrc-ios-bindings/"
           echo "XCFramework at ${RUNNER_TEMP}/tvremote_core.xcframework"
-      - name: iOS SPM compile gate (TVRemoteCoreLogic on simulator SDK)
+      - name: iOS compile gate (TVRemoteCoreLogic typecheck on simulator SDK)
         run: |
-          xcodebuild -scheme TVRemoteCoreLogic -destination 'generic/platform=iOS Simulator' build \
-            -clonedSourcePackagesDirPath "${RUNNER_TEMP}/spm-clone" || \
-          xcodebuild -scheme TVRemoteCoreLogic -destination 'generic/platform=iOS Simulator' build
-        working-directory: macos-controller
+          xcrun -sdk iphonesimulator swiftc -swift-version 6 -typecheck \
+            -target arm64-apple-ios16.0-simulator \
+            macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift
+          xcrun -sdk iphoneos swiftc -swift-version 6 -typecheck \
+            -target arm64-apple-ios16.0 \
+            macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift
       - name: Zig core cross-build for iOS device
         working-directory: windows-controller
         env:
