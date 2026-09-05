@@ -176,6 +176,9 @@ jobs:
             macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift \
             -L "${RUNNER_TEMP}/zig-ios-core/lib" -ltv_remote_core -lmbedtls -lmbedx509 -lmbedcrypto \
             -L core-rs/target/aarch64-apple-ios/release -ltvremote_core \
+            -L "$(xcrun -sdk iphoneos --show-sdk-path)/usr/lib/clang/$(basename "$(dirname "$(dirname "$(dirname "$(find "$(xcrun -sdk iphoneos --show-sdk-path)/usr/lib/clang" -name "libclang_rt.ios.a" 2>/dev/null | head -1)")")")")")/lib/darwin" \
+            -lclang_rt.ios \
+            ios-controller/Stubs/cfloat128_stubs.c \
             -framework SwiftUI -framework UIKit \
             -o "${RUNNER_TEMP}/TVRemoteController-ios-sim"
           file "${RUNNER_TEMP}/TVRemoteController-ios-sim"
