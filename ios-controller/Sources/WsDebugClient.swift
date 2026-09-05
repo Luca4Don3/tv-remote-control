@@ -25,6 +25,7 @@ final class WsDebugClient: @unchecked Sendable {
     private static let webSocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
     private let host: String
+    private let controllerId: String
     private let port: UInt16
     private let socketFD: Int32
     private let crypto: SessionCrypto
@@ -32,9 +33,11 @@ final class WsDebugClient: @unchecked Sendable {
     private var serverCounter: UInt64 = 0
     private let heartbeat: DispatchSourceTimer?
 
-    /// `psk` 为配对下发的 32B secret；`isClient` 固定 true。
-    init(host: String, port: UInt16 = WsDebugClient.debugPort, psk: Data) throws {
+    /// `psk` 为配对下发的 32B secret；`controllerId` 为配对下发的 32 hex 标识；
+    /// 二者均进入 ws_hello 与加密信封（agent 服务端逐字校验）。
+    init(host: String, controllerId: String, psk: Data, port: UInt16 = WsDebugClient.debugPort) throws {
         self.host = host
+        self.controllerId = controllerId
         self.port = port
         self.socketFD = try Self.openTcp(host: host, port: port)
         do {
@@ -76,9 +79,27 @@ final class WsDebugClient: @unchecked Sendable {
     }
 
     func sendText(_ text: String, draft: Bool) throws -> String {
-        let escaped = text
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
+        // JSON escaping complete (aligned with Kotlin StrictJson.appendQuoted): quotes/backslashes/control characters all handled,
+        // server-side StrictJson rejects unescaped control characters
+        var escaped = String()
+        escaped.reserveCapacity(text.count)
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\"": escaped += "\\\""
+            case "\\": escaped += "\\\\"
+            case "\u{0008}": escaped += "\\b"
+            case "\u{000C}": escaped += "\\f"
+            case "\n": escaped += "\\n"
+            case "\r": escaped += "\\r"
+            case "\t": escaped += "\\t"
+            default:
+                if scalar.value < 0x20 {
+                    escaped += String(format: "\\u%04x", scalar.value)
+                } else {
+                    escaped.unicodeScalars.append(scalar)
+                }
+            }
+        }
         let payload = "{\"text\":\"\(escaped)\"}"
         return try sendCommand(type: draft ? "text_draft" : "text_commit", payload: payload)
     }
@@ -86,7 +107,7 @@ final class WsDebugClient: @unchecked Sendable {
     private func sendCommand(type: String, payload: String) throws -> String {
         let requestID = "c-\(UInt64.random(in: 1...UInt64.max))"
         let envelope = "{\"protocolVersion\":1,\"requestId\":\"\(requestID)\","
-            + "\"sessionId\":\"\",\"sequence\":1,\"type\":\"\(type)\",\"payload\":\(payload)}"
+            + "\"sessionId\":\"\(controllerId)\",\"sequence\":1,\"type\":\"\(type)\",\"payload\":\(payload)}"
         let sealed = try crypto.seal(isClient: true, plaintext: Data(envelope.utf8), aad: Data())
         let frame = try wsCodec.encodeClient(opcode: 2, payload: sealed)
         try writeAll(frame)
@@ -138,7 +159,7 @@ final class WsDebugClient: @unchecked Sendable {
 
     private func helloExchange(clientRandom: Data) throws -> Data {
         let hello = "{\"protocolVersion\":1,\"requestId\":\"ws-hello-1\",\"sessionId\":\"\","
-            + "\"sequence\":1,\"type\":\"ws_hello\",\"payload\":{\"controllerId\":\"\","
+            + "\"sequence\":1,\"type\":\"ws_hello\",\"payload\":{\"controllerId\":\"\(controllerId)\","
             + "\"clientRandom\":\"\(clientRandom.map { String(format: "%02x", $0) }.joined())\"}}"
         let helloFrame = try wsCodec.encodeClient(opcode: 1, payload: Data(hello.utf8))
         try writeAll(helloFrame)
