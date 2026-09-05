@@ -63,6 +63,13 @@ pub fn build(b: *std.Build) void {
         },
     });
     b.installArtifact(core_library);
+    // iOS 静态库链 mbedTLS：静态依赖产物不会随 --prefix 安装（在 zig-cache 内），
+    // 为 iOS 显式安装三个 mbedTLS 静态库供外部 swiftc 链接门禁使用
+    if (is_ios) {
+        b.installArtifact(mbed.tls);
+        b.installArtifact(mbed.x509);
+        b.installArtifact(mbed.crypto);
+    }
 
     if (is_windows) {
         const generated = b.addWriteFiles();
