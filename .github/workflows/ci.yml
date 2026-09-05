@@ -163,6 +163,12 @@ jobs:
           zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-ios --prefix "${RUNNER_TEMP}/zig-ios-core"
       - name: iOS full link gate (SwiftUI + Zig core + Rust core)
         run: |
+          # Xcode 16+ 的 compiler-rt 在 toolchain 而非 SDK，库名拆分为 *_runtime 变体
+          CLANG_RT_A="$(find "$(xcrun -f clang | sed 's|/bin/clang||')/../lib" -name "libclang_rt.ios*.a" 2>/dev/null | head -1)"
+          [ -z "$CLANG_RT_A" ] && CLANG_RT_A="$(find /Applications/Xcode.app/Contents/Developer/Toolchains -name "libclang_rt.ios*.a" 2>/dev/null | head -1)"
+          [ -z "$CLANG_RT_A" ] && { echo "libclang_rt.ios*.a not found"; exit 1; }
+          echo "clang_rt: $CLANG_RT_A"
+          CLANG_RT_LIB="$(basename "$CLANG_RT_A" | sed 's/^lib//;s/\.a$//')"
           swiftc -swift-version 6 -parse-as-library \
             -target arm64-apple-ios16.0 \
             -sdk "$(xcrun -sdk iphoneos --show-sdk-path)" \
@@ -176,8 +182,7 @@ jobs:
             macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift \
             -L "${RUNNER_TEMP}/zig-ios-core/lib" -ltv_remote_core -lmbedtls -lmbedx509 -lmbedcrypto \
             -L core-rs/target/aarch64-apple-ios/release -ltvremote_core \
-            -L "$(dirname "$(find "$(xcrun -sdk iphoneos --show-sdk-path)/usr/lib" -name "libclang_rt.ios.a" | head -1)")" \
-            -lclang_rt.ios \
+            -L "$(dirname "$CLANG_RT_A")" "-l${CLANG_RT_LIB}" \
             -framework SwiftUI -framework UIKit \
             -o "${RUNNER_TEMP}/TVRemoteController-ios-sim"
           file "${RUNNER_TEMP}/TVRemoteController-ios-sim"
