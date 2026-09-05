@@ -31,7 +31,13 @@ pub fn build(b: *std.Build) void {
     if (!is_windows and !is_macos_arm64 and !is_ios and !is_linux_host) {
         @panic("supported product targets are Windows x86/x64/ARM64, macOS ARM64 and iOS ARM64");
     }
-    const mbed = addMbedTls(b, target, optimize, is_windows);
+    // iOS 交叉编译需要 Xcode iPhoneOS SDK 的 sysroot（Zig 0.16 不自动探测 iphoneos SDK）
+    const ios_sysroot: ?[]const u8 = if (is_ios) blk: {
+        break :blk std.process.getEnvVarOwned(b.allocator, "TVRC_IOS_SDK_PATH") catch
+            @panic("iOS target requires TVRC_IOS_SDK_PATH (Xcode iPhoneOS SDK path)");
+    } else null;
+
+    const mbed = addMbedTls(b, target, optimize, is_windows, ios_sysroot);
 
     core.addIncludePath(b.path("src"));
     core.addIncludePath(b.path("include"));
@@ -48,7 +54,7 @@ pub fn build(b: *std.Build) void {
             .strip = strip_product,
         }),
     });
-    configureTlsConsumer(b, core_library, mbed, is_windows);
+    configureTlsConsumer(b, core_library, mbed, is_windows, ios_sysroot);
     if (is_windows) core_library.root_module.addCSourceFile(.{
         .file = b.path("src/windows_runtime_paths.c"),
         .flags = &.{
@@ -208,6 +214,7 @@ fn addMbedTls(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     is_windows: bool,
+    ios_sysroot: ?[]const u8,
 ) MbedLibraries {
     const vendor = "vendor/mbedtls-3.6.7";
     std.Io.Dir.cwd().access(b.graph.io, vendor ++ "/include/mbedtls/version.h", .{}) catch {
@@ -216,7 +223,9 @@ fn addMbedTls(
     const include = b.path(vendor ++ "/include");
     const library = b.path(vendor ++ "/library");
     const prefix_map = b.fmt("-ffile-prefix-map={s}=.", .{b.pathFromRoot("")});
-    const flags = &.{ "-std=c11", "-D_FILE_OFFSET_BITS=64", prefix_map };
+    const flags: []const []const u8 = if (ios_sysroot) |sdk| &.{
+        "-std=c11", "-D_FILE_OFFSET_BITS=64", prefix_map, b.fmt("-isysroot{s}", .{sdk}),
+    } else &.{ "-std=c11", "-D_FILE_OFFSET_BITS=64", prefix_map };
 
     const crypto = b.addLibrary(.{
         .name = "mbedcrypto",
@@ -292,13 +301,17 @@ fn configureTlsConsumer(
     consumer: *std.Build.Step.Compile,
     mbed: MbedLibraries,
     is_windows: bool,
+    ios_sysroot: ?[]const u8,
 ) void {
     const prefix_map = b.fmt("-ffile-prefix-map={s}=.", .{b.pathFromRoot("")});
+    const ios_flags: []const []const u8 = if (ios_sysroot) |sdk| &.{
+        "-std=c11", prefix_map, b.fmt("-isysroot{s}", .{sdk}),
+    } else &.{ "-std=c11", prefix_map };
     consumer.root_module.addIncludePath(b.path("src"));
     consumer.root_module.addIncludePath(b.path("include"));
     consumer.root_module.addIncludePath(b.path("vendor/mbedtls-3.6.7/include"));
-    consumer.root_module.addCSourceFile(.{ .file = b.path("src/tls_client.c"), .flags = &.{ "-std=c11", prefix_map } });
-    consumer.root_module.addCSourceFile(.{ .file = b.path("src/credential_store.c"), .flags = &.{ "-std=c11", prefix_map } });
+    consumer.root_module.addCSourceFile(.{ .file = b.path("src/tls_client.c"), .flags = ios_flags });
+    consumer.root_module.addCSourceFile(.{ .file = b.path("src/credential_store.c"), .flags = ios_flags });
     consumer.root_module.linkLibrary(mbed.tls);
     consumer.root_module.linkLibrary(mbed.x509);
     consumer.root_module.linkLibrary(mbed.crypto);

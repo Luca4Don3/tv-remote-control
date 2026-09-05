@@ -143,11 +143,10 @@ jobs:
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-global-cache-ios
           ZIG_LOCAL_CACHE_DIR: ${{ runner.temp }}/zig-local-cache-ios
-          SDKROOT: ${{ runner.temp }}/iphoneos-sdk
+          TVRC_IOS_SDK_PATH: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
         run: |
-          xcrun -sdk iphoneos --show-sdk-path
-          mkdir -p "${SDKROOT}"
-          cp -R "$(xcrun -sdk iphoneos --show-sdk-path)"/* "${SDKROOT}/" 2>/dev/null || true
+          export TVRC_IOS_SDK_PATH="$(xcrun -sdk iphoneos --show-sdk-path)"
+          echo "iOS SDK: $TVRC_IOS_SDK_PATH"
           zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-ios --prefix "${RUNNER_TEMP}/zig-ios-core"
       - name: ARM64 core and complete app link
         env:
