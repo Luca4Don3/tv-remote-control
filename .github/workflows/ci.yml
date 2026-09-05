@@ -111,6 +111,35 @@ jobs:
           CLANG_MODULE_CACHE_PATH: ${{ runner.temp }}/clang-module-cache
           SWIFTPM_MODULECACHE_OVERRIDE: ${{ runner.temp }}/swiftpm-module-cache
         run: swift test --package-path macos-controller --scratch-path "${RUNNER_TEMP}/swift-build"
+      - name: Rust iOS static libraries (aarch64-ios + sim)
+        run: |
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+          cargo build --locked --release --target aarch64-apple-ios --manifest-path core-rs/Cargo.toml
+          cargo build --locked --release --target aarch64-apple-ios-sim --manifest-path core-rs/Cargo.toml
+      - name: Package tvremote_core XCFramework
+        run: |
+          mkdir -p "${RUNNER_TEMP}/xcframework-headers"
+          cp core-rs/bindings/swift/tvremote_coreFFI.modulemap "${RUNNER_TEMP}/xcframework-headers/module.modulemap"
+          cp core-rs/bindings/swift/tvremote_coreFFI.h "${RUNNER_TEMP}/xcframework-headers/"
+          xcodebuild -create-xcframework \
+            -library core-rs/target/aarch64-apple-ios/release/libtvremote_core.a -headers "${RUNNER_TEMP}/xcframework-headers" \
+            -library core-rs/target/aarch64-apple-ios-sim/release/libtvremote_core.a -headers "${RUNNER_TEMP}/xcframework-headers" \
+            -output "${RUNNER_TEMP}/tvremote_core.xcframework"
+          mkdir -p "${RUNNER_TEMP}/tvrc-ios-bindings"
+          cp core-rs/bindings/swift/tvremote_core.swift "${RUNNER_TEMP}/tvrc-ios-bindings/"
+          echo "XCFramework at ${RUNNER_TEMP}/tvremote_core.xcframework"
+      - name: iOS SPM compile gate (TVRemoteCoreLogic on simulator SDK)
+        run: |
+          xcodebuild -scheme TVRemoteCoreLogic -destination 'generic/platform=iOS Simulator' build \
+            -clonedSourcePackagesDirPath "${RUNNER_TEMP}/spm-clone" || \
+          xcodebuild -scheme TVRemoteCoreLogic -destination 'generic/platform=iOS Simulator' build
+        working-directory: macos-controller
+      - name: Zig core cross-build for iOS device
+        working-directory: windows-controller
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-global-cache-ios
+          ZIG_LOCAL_CACHE_DIR: ${{ runner.temp }}/zig-local-cache-ios
+        run: zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-ios --prefix "${RUNNER_TEMP}/zig-ios-core"
       - name: ARM64 core and complete app link
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-global-cache
