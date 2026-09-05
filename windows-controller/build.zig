@@ -167,7 +167,7 @@ pub fn build(b: *std.Build) void {
     }
 
     const core_tests = b.addTest(.{ .root_module = core });
-    configureTlsConsumer(b, core_tests, mbed, is_windows);
+    configureTlsConsumer(b, core_tests, mbed, is_windows, ios_sysroot);
     const run_core_tests = b.addRunArtifact(core_tests);
     const test_step = b.step("test", "Run controller core tests");
     test_step.dependOn(&run_core_tests.step);
