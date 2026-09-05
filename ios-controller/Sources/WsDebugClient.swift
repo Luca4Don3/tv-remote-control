@@ -144,7 +144,7 @@ final class WsDebugClient: @unchecked Sendable {
         try writeAll(helloFrame)
         let ackFrame = try readFrame()
         guard ackFrame.opcode == 1,
-              let text = String(bytes: ackFrame.payload, encoding: .utf8),
+              let text = String(decoding: ackFrame.payload, as: UTF8.self),
               let range = text.range(of: "\"serverRandom\":\""),
               let end = text[range.upperBound...].firstIndex(of: "\"") else {
             throw WsError.handshakeFailed("ws_hello_ack missing serverRandom")
@@ -180,7 +180,7 @@ final class WsDebugClient: @unchecked Sendable {
                 }
             }
             if connected { return fd }
-            closeSocket(fd)
+            Self.closeSocketFd(fd)
             fd = -1
         }
         throw WsError.connectFailed("no address reachable")
@@ -216,7 +216,7 @@ final class WsDebugClient: @unchecked Sendable {
         return String(decoding: line, as: UTF8.self)
     }
 
-    private func readFrame() throws -> (opcode: UInt8, payload: [UInt8]) {
+    private func readFrame() throws -> (opcode: UInt8, payload: Data) {
         var header = [UInt8]()
         while header.count < 2 {
             var chunk = [UInt8](repeating: 0, count: 2 - header.count)
@@ -248,7 +248,7 @@ final class WsDebugClient: @unchecked Sendable {
         return Data(bytes)
     }
 
-    private static func readCounter(_ envelope: [UInt8]) throws -> UInt64 {
+    private static func readCounter(_ envelope: Data) throws -> UInt64 {
         guard envelope.count > 8 else { throw WsError.protocolError("ciphertext too short") }
         var value: UInt64 = 0
         for byte in envelope.prefix(8) {
