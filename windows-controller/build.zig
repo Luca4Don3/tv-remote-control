@@ -33,7 +33,7 @@ pub fn build(b: *std.Build) void {
     }
     // iOS 交叉编译需要 Xcode iPhoneOS SDK 的 sysroot（Zig 0.16 不自动探测 iphoneos SDK）
     const ios_sysroot: ?[]const u8 = if (is_ios) blk: {
-        break :blk std.process.getEnvVarOwned(b.allocator, "TVRC_IOS_SDK_PATH") catch
+        break :blk b.graph.environ_map.get("TVRC_IOS_SDK_PATH") orelse
             @panic("iOS target requires TVRC_IOS_SDK_PATH (Xcode iPhoneOS SDK path)");
     } else null;
 
