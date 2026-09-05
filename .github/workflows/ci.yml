@@ -151,6 +151,24 @@ jobs:
             ios-controller/Sources/WsDebugClient.swift \
             core-rs/bindings/swift/tvremote_core.swift \
             macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift
+      - name: iOS full link gate (SwiftUI + Zig core + Rust core)
+        run: |
+          swiftc -swift-version 6 -parse-as-library \
+            -target arm64-apple-ios16.0-simulator \
+            -sdk "$(xcrun -sdk iphonesimulator --show-sdk-path)" \
+            -import-objc-header windows-controller/include/tv_remote_core.h \
+            -Xcc -fmodule-map-file=core-rs/bindings/swift/tvremote_coreFFI.modulemap \
+            -I core-rs/bindings/swift \
+            ios-controller/Sources/ControllerApp.swift \
+            ios-controller/Sources/KeychainCredentialStore.swift \
+            ios-controller/Sources/WsDebugClient.swift \
+            core-rs/bindings/swift/tvremote_core.swift \
+            macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift \
+            -L "${RUNNER_TEMP}/zig-ios-core/lib" -ltv_remote_core -lmbedtls -lmbedx509 -lmbedcrypto \
+            -L core-rs/target/aarch64-apple-ios-sim/release -ltvremote_core \
+            -framework SwiftUI -framework UIKit \
+            -o "${RUNNER_TEMP}/TVRemoteController-ios-sim"
+          file "${RUNNER_TEMP}/TVRemoteController-ios-sim"
       - name: Zig core cross-build for iOS device
         working-directory: windows-controller
         env:
