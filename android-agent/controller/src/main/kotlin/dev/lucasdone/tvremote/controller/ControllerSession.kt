@@ -18,21 +18,41 @@ import java.security.SecureRandom
  * 电视会话编排：连接 → 配对（6 位码 + SAS）→ 认证 → 遥控/文本。
  * 流程语义与桌面控制端一致；证书指纹在配对成功后由调用方持久化。
  */
+/**
+ * 电视会话编排：连接 → 配对（6 位码 + SAS）→ 认证 → 遥控/文本。
+ *
+ * 协议要求 `auth_begin` 只能作为连接的第一条消息（服务端 handleSocket 按
+ * first 消息路由），因此配对与认证分属两条连接：`authenticate` 内部会
+ * 用 `connectionFactory` 重建一条干净连接。
+ */
 class ControllerSession(
-    private val connection: dev.lucasdone.tvremote.controller.net.ConnectionTransport,
+    private val connectionFactory: () -> dev.lucasdone.tvremote.controller.net.ConnectionTransport,
 ) {
     private val random = SecureRandom()
     private var sessionId: String = ""
+    private var connection: dev.lucasdone.tvremote.controller.net.ConnectionTransport? = null
+    private var connectionUsedForPairing = false
 
     val fingerprintHex: String
-        get() = Hex.encode(connection.peerFingerprint)
+        get() = Hex.encode(activeConnection().peerFingerprint)
+
+    private fun activeConnection(): dev.lucasdone.tvremote.controller.net.ConnectionTransport {
+        var current = connection
+        if (current == null) {
+            current = connectionFactory()
+            connection = current
+        }
+        return current
+    }
 
     /** 6 位码配对阶段一：等待 SAS 展示；凭据下发在 `completePairing` 阶段接收。 */
     fun pairWithCode(code: String, controllerName: String): String {
         require(code.length == 6 && code.all { it.isDigit() }) { "code must be 6 digits" }
+        connectionUsedForPairing = true
         val controllerNonce = randomBytes(32)
-        connection.send(
-            requestId = connection.nextRequestId(),
+        val pairingTransport = activeConnection()
+        pairingTransport.send(
+            requestId = pairingTransport.nextRequestId(),
             sessionId = "",
             type = "pair_request",
             payload = jsonObject(
@@ -58,8 +78,9 @@ class ControllerSession(
         val controllerId = credential.payload.requireString("controllerId", 32)
         val secret = Hex.decode(credential.payload.requireString("secret", 64))
         if (controllerId.length != 32) throw PairingRejectedException("invalid controller id length")
-        connection.send(
-            requestId = connection.nextRequestId(),
+        val pairingTransport = activeConnection()
+        pairingTransport.send(
+            requestId = pairingTransport.nextRequestId(),
             sessionId = "",
             type = "pair_store_ack",
             payload = jsonObject(
@@ -73,7 +94,7 @@ class ControllerSession(
         return PairedController(
             controllerId = controllerId,
             secret = secret,
-            tvCertificateFingerprint = connection.peerFingerprint,
+            tvCertificateFingerprint = activeConnection().peerFingerprint,
         )
     }
 
@@ -92,9 +113,16 @@ class ControllerSession(
         secret: ByteArray,
         certificateFingerprint: ByteArray,
     ): Capabilities {
+        if (connectionUsedForPairing) {
+            // 协议要求 auth_begin 为连接首条消息：配对连接复用即被服务端断开
+            connection?.close()
+            connection = connectionFactory()
+            connectionUsedForPairing = false
+        }
         val clientNonce = randomBytes(32)
-        connection.send(
-            requestId = connection.nextRequestId(),
+        val authTransport = activeConnection()
+        authTransport.send(
+            requestId = authTransport.nextRequestId(),
             sessionId = "",
             type = "auth_begin",
             payload = jsonObject(
@@ -113,8 +141,8 @@ class ControllerSession(
             clientNonce = clientNonce,
             serverNonce = serverNonce,
         )
-        connection.send(
-            requestId = connection.nextRequestId(),
+        authTransport.send(
+            requestId = authTransport.nextRequestId(),
             sessionId = "",
             type = "auth_response",
             payload = jsonObject(
@@ -131,8 +159,9 @@ class ControllerSession(
     }
 
     fun sendKeyEvent(key: String, state: String, repeatCount: Int = 0): AckResult {
-        val message = connection.send(
-            requestId = connection.nextRequestId(),
+        val transport = activeConnection()
+        val message = transport.send(
+            requestId = transport.nextRequestId(),
             sessionId = sessionId,
             type = "key_event",
             payload = jsonObject(
@@ -150,8 +179,9 @@ class ControllerSession(
     }
 
     fun sendText(text: String, draft: Boolean): AckResult {
-        val message = connection.send(
-            requestId = connection.nextRequestId(),
+        val transport = activeConnection()
+        val message = transport.send(
+            requestId = transport.nextRequestId(),
             sessionId = sessionId,
             type = if (draft) "text_draft" else "text_commit",
             payload = jsonObject("text" to jsonString(text)),
@@ -166,7 +196,7 @@ class ControllerSession(
 
     private fun receiveExpect(vararg types: String): ProtocolEnvelope? {
         while (true) {
-            val message = connection.receive() ?: return null
+            val message = activeConnection().receive() ?: return null
             if (message.type in types) return message
             if (message.type == "error") return message
             // 其他服务端推送（media_state 等）忽略
@@ -174,6 +204,8 @@ class ControllerSession(
     }
 
     private fun randomBytes(size: Int): ByteArray = ByteArray(size).also(random::nextBytes)
+
+    internal fun parseCapabilitiesPublic(payload: JsonValue.ObjectValue): Capabilities = parseCapabilities(payload)
 
     private fun parseCapabilities(payload: JsonValue.ObjectValue): Capabilities {
         val textInput = (payload["textInput"] as? JsonValue.StringValue)?.value ?: "UNSUPPORTED"
@@ -195,6 +227,12 @@ class ControllerSession(
 
     data class AckResult(val sequence: Long, val status: String, val reason: String?) {
         val isSuccess: Boolean get() = status == "SUCCESS"
+    }
+
+    /** 关闭当前连接（认证后的控制连接；配对连接已被 authenticate 替换关闭）。 */
+    fun close() {
+        connection?.close()
+        connection = null
     }
 
     class PairingRejectedException(message: String) : RuntimeException(message)

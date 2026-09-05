@@ -260,11 +260,11 @@ class ControlServer(
         } catch (_: ProtocolException) {
             Log.w(TAG, "Rejected malformed control protocol message")
         } catch (_: SocketException) {
-            Unit
-        } catch (_: IOException) {
-            Unit
+            Log.i(TAG, "Control socket closed by peer")
+        } catch (error: IOException) {
+            Log.i(TAG, "Control connection IO failure: ${error.javaClass.simpleName}: ${error.message ?: ""}")
         } catch (error: RuntimeException) {
-            Log.e(TAG, "Control connection failed: ${error.javaClass.simpleName}")
+            Log.e(TAG, "Control connection failed: ${error.javaClass.simpleName}", error)
         } finally {
             openSockets.remove(socket)
             val current = active.get()

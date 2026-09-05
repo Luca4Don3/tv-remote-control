@@ -109,7 +109,14 @@ class MainActivity : ComponentActivity() {
                 try {
                     val tls = TvConnection.connect(host, TvConnection.DEFAULT_PORT, pinnedFingerprint = null)
                     connection = tls
-                    val controllerSession = ControllerSession(tls)
+                    // 配对后认证需要新连接（auth_begin 必须为连接首条消息）
+                    val controllerSession = ControllerSession {
+                        val fresh = TvConnection.connect(
+                            host, TvConnection.DEFAULT_PORT,
+                            pinnedFingerprint = credentialStore?.load(host)?.tvCertificateFingerprint,
+                        )
+                        fresh
+                    }
                     session = controllerSession
                     val sas = controllerSession.pairWithCode(code, controllerName)
                     runOnUiThread { state.value = UiState.Pairing(host = host, sas = sas, error = null) }

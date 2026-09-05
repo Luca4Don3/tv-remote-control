@@ -67,7 +67,7 @@ class ControllerSessionTest {
     fun pairingFullFlow() {
         val script = ArrayDeque<ProtocolEnvelope>()
         val transport = ScriptedTransport(fingerprint, script)
-        val session = ControllerSession(transport)
+        val session = ControllerSession { transport }
 
         // 阶段一：pair_request → pairing_sas
         script += envelope(
@@ -116,7 +116,7 @@ class ControllerSessionTest {
     fun authenticationResponseMatchesTranscript() {
         val script = ArrayDeque<ProtocolEnvelope>()
         val transport = ScriptedTransport(fingerprint, script)
-        val session = ControllerSession(transport)
+        val session = ControllerSession { transport }
         val controllerId = "ab".repeat(16)
         val secret = ByteArray(32) { (it + 3).toByte() }
         val challengeId = "challenge-x"
@@ -163,7 +163,7 @@ class ControllerSessionTest {
     fun pairingRejectionSurfaces() {
         val script = ArrayDeque<ProtocolEnvelope>()
         val transport = ScriptedTransport(fingerprint, script)
-        val session = ControllerSession(transport)
+        val session = ControllerSession { transport }
         script += envelope(
             "pair_rejected",
             jsonObject("reason" to jsonString("pairing rejected")),
