@@ -18,6 +18,8 @@ import dev.lucasdone.tvremote.agent.auth.PairingWindow
 import dev.lucasdone.tvremote.agent.auth.SessionManager
 import dev.lucasdone.tvremote.agent.command.AccessibilityCommandExecutor
 import dev.lucasdone.tvremote.agent.command.CommandDispatcher
+import dev.lucasdone.tvremote.agent.command.AccessibilityTextCommandExecutor
+import dev.lucasdone.tvremote.agent.command.TextCommandDispatcher
 import dev.lucasdone.tvremote.agent.command.KeyStateTracker
 import dev.lucasdone.tvremote.agent.command.MediaCommandExecutor
 import dev.lucasdone.tvremote.agent.device.CapabilityDetector
@@ -26,6 +28,7 @@ import dev.lucasdone.tvremote.agent.media.MediaSessionCoordinator
 import dev.lucasdone.tvremote.agent.transport.ControlServer
 import dev.lucasdone.tvremote.agent.transport.ControlServerCallbacks
 import dev.lucasdone.tvremote.agent.transport.DiscoveryServer
+import dev.lucasdone.tvremote.agent.transport.ws.WebSocketDebugServer
 import dev.lucasdone.tvremote.agent.transport.TlsIdentityStore
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -41,6 +44,7 @@ class AgentService : Service(), ControlServerCallbacks {
     @Volatile private var discoveryServer: DiscoveryServer? = null
     @Volatile private var credentialStore: KeystoreCredentialStore? = null
     @Volatile private var mediaCoordinator: MediaSessionCoordinator? = null
+    @Volatile private var wsDebugServer: WebSocketDebugServer? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -95,15 +99,17 @@ class AgentService : Service(), ControlServerCallbacks {
     override fun onDestroy() {
         val resources = synchronized(networkLock) {
             destroyed = true
-            val snapshot = Triple(controlServer, discoveryServer, mediaCoordinator)
+            val snapshot = Quad(controlServer, discoveryServer, mediaCoordinator, wsDebugServer)
             controlServer = null
             discoveryServer = null
             credentialStore = null
             mediaCoordinator = null
+            wsDebugServer = null
             snapshot
         }
         resources.first?.close()
         resources.second?.close()
+        resources.fourth?.close()
         resources.third?.let(MediaRuntime::uninstall)
         lifecycleExecutor.shutdownNow()
         lifecycleExecutor.awaitTermination(2, TimeUnit.SECONDS)
@@ -120,6 +126,7 @@ class AgentService : Service(), ControlServerCallbacks {
     private fun initializeNetwork() {
         var control: ControlServer? = null
         var discovery: DiscoveryServer? = null
+        var wsDebug: WebSocketDebugServer? = null
         var media: MediaSessionCoordinator? = null
         try {
             val identity = TlsIdentityStore(this).loadOrCreate()
@@ -137,11 +144,27 @@ class AgentService : Service(), ControlServerCallbacks {
                         listOf(AccessibilityCommandExecutor(), MediaCommandExecutor(this)),
                     )
                 },
+                textDispatcherFactory = {
+                    TextCommandDispatcher(listOf(AccessibilityTextCommandExecutor()))
+                },
                 mediaCoordinator = media,
                 mediaAvailable = { CapabilityDetector.isMediaTransportAvailable(this) },
                 capabilities = { CapabilityDetector.detect(this).toProtocolJson() },
                 callbacks = this,
             )
+            wsDebug = WebSocketDebugServer(
+                credentialStore = credentialStore,
+                dispatcherFactory = {
+                    CommandDispatcher(
+                        KeyStateTracker(),
+                        listOf(AccessibilityCommandExecutor(), MediaCommandExecutor(this)),
+                    )
+                },
+                textDispatcherFactory = {
+                    TextCommandDispatcher(listOf(AccessibilityTextCommandExecutor()))
+                },
+            )
+            wsDebug?.start()
             discovery = DiscoveryServer(displayName = getString(dev.lucasdone.tvremote.agent.R.string.app_name))
             control.start()
             discovery.start()
@@ -151,11 +174,13 @@ class AgentService : Service(), ControlServerCallbacks {
                 discoveryServer = discovery
                 this.credentialStore = credentialStore
                 mediaCoordinator = media
+                wsDebugServer = wsDebug
             }
             AgentStatusRegistry.listening()
             refreshControllers()
             updateNotification("等待已认证的控制端")
         } catch (error: Exception) {
+            wsDebug?.close()
             discovery?.close()
             control?.close()
             media?.let(MediaRuntime::uninstall)
@@ -285,6 +310,8 @@ class AgentService : Service(), ControlServerCallbacks {
     private fun servicePendingIntent(intent: Intent, requestCode: Int) = PendingIntent.getService(this, requestCode, intent, pendingIntentFlags())
     private fun activityPendingIntent(intent: Intent, requestCode: Int) = PendingIntent.getActivity(this, requestCode, intent, pendingIntentFlags())
     private fun preferences() = getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+
+    private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
     companion object {
         private const val TAG = "AgentService"

@@ -38,6 +38,7 @@ data class CapabilitySnapshot(
     val tls12: CapabilityStatus,
     val modelVerification: CapabilityStatus,
     val mediaTransport: CapabilityStatus,
+    val textInput: CapabilityStatus,
     val keySupport: Map<LogicalKey, KeyCapability>,
 ) {
     fun toJson(): String = JSONObject()
@@ -57,6 +58,7 @@ data class CapabilitySnapshot(
         .put("tls12", tls12.name)
         .put("modelVerification", modelVerification.name)
         .put("mediaTransport", mediaTransport.name)
+        .put("textInput", textInput.name)
         .put("keySupport", JSONObject().also { output -> keySupport.forEach { (key, value) -> output.put(key.name, value.name) } })
         .toString(2)
 
@@ -79,6 +81,7 @@ data class CapabilitySnapshot(
         "h264Encoder" to jsonString(h264Encoder.name),
         "modelVerification" to jsonString(modelVerification.name),
         "mediaTransport" to jsonString(mediaTransport.name),
+        "textInput" to jsonString(textInput.name),
         "keySupport" to JsonValue.ObjectValue(linkedMapOf<String, JsonValue>().also { output ->
             keySupport.forEach { (key, value) -> output[key.name] = jsonString(value.name) }
         }),
@@ -120,6 +123,7 @@ object CapabilityDetector {
             tls12 = if (tlsProbe.tls12Available) CapabilityStatus.SUPPORTED else CapabilityStatus.UNSUPPORTED,
             modelVerification = CapabilityStatus.UNVERIFIED,
             mediaTransport = if (isMediaTransportAvailable(context)) CapabilityStatus.PERMISSION_REQUIRED else CapabilityStatus.UNSUPPORTED,
+            textInput = if (Build.VERSION.SDK_INT >= 21) accessibilityStatus else CapabilityStatus.UNSUPPORTED,
             keySupport = detectKeySupport(context, accessibilityEnabled),
         )
     }

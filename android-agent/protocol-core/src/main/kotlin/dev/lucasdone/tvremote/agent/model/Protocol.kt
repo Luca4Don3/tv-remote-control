@@ -44,3 +44,11 @@ data class CommandAck(
     val status: AckStatus,
     val reason: String? = null,
 )
+
+enum class TextAction { COMMIT, DRAFT }
+
+data class TextCommand(
+    val sequence: Long,
+    val action: TextAction,
+    val text: String,
+)

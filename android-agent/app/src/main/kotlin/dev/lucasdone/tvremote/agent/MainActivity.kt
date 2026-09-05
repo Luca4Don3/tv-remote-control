@@ -15,8 +15,17 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.ImageView
 import android.widget.TextView
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import dev.lucasdone.tvremote.agent.device.CapabilityDetector
+import dev.lucasdone.tvremote.agent.transport.DiscoveryServer
+import java.net.InetAddress
+import java.net.NetworkInterface
+import java.util.EnumMap
 import dev.lucasdone.tvremote.agent.service.AgentService
 import dev.lucasdone.tvremote.agent.service.AgentMediaState
 import dev.lucasdone.tvremote.agent.service.AgentStatusRegistry
@@ -29,8 +38,10 @@ class MainActivity : Activity() {
     private lateinit var mediaStatusView: TextView
     private lateinit var mediaActionButton: Button
     private lateinit var pairingView: TextView
+    private lateinit var qrView: ImageView
     private lateinit var controllersView: LinearLayout
     private var displayedPairingId: String? = null
+    private val DISCOVERY_CONTROL_PORT = DiscoveryServer.CONTROL_PORT
     private var displayedMediaRequestId = 0L
     private var pendingProjectionRequestId: Long? = null
     private val statusListener = AgentStatusRegistry.Listener { snapshot ->
@@ -86,6 +97,10 @@ class MainActivity : Activity() {
             text = "提示：受 DRM/HDCP 保护的内容可能显示黑屏；本应用不会检测或绕过内容保护。"
         }, matchWidth())
         content.addView(pairingView, matchWidth())
+        qrView = ImageView(this).apply {
+            contentDescription = "扫码配对二维码"
+        }
+        content.addView(qrView, matchWidth())
         content.addView(controllersView, matchWidth())
         content.addView(Button(this).apply {
             text = "启动基础遥控服务"
@@ -135,9 +150,12 @@ class MainActivity : Activity() {
         val pairing = snapshot.pairing
         pairingView.text = when {
             pairing == null -> ""
-            pairing.sas == null -> "配对码：${pairing.code}\n请仅向当前控制端输入此码。"
+            pairing.sas == null -> {
+                "配对码：${pairing.code}\n请仅向当前控制端输入此码，或扫码配对。"
+            }
             else -> "安全核对码：${pairing.sas}"
         }
+        renderQr(pairing)
         controllersView.removeAllViews()
         if (snapshot.pairedControllers.isNotEmpty()) {
             controllersView.addView(TextView(this).apply { text = "已配对控制端" })
@@ -180,6 +198,51 @@ class MainActivity : Activity() {
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.WRAP_CONTENT,
     ).apply { bottomMargin = 16 }
+
+    /** 渲染扫码配对二维码：tvrc://pair?host&port&token&ttl；token 过期后自动隐藏。 */
+    private fun renderQr(pairing: dev.lucasdone.tvremote.agent.service.PairingUiState?) {
+        val nowMs = System.nanoTime() / 1_000_000L
+        val token = pairing?.qrToken
+        if (token == null || nowMs >= pairing.qrTokenExpiresAtMs) {
+            qrView.setImageDrawable(null)
+            return
+        }
+        val host = primaryLanAddress()?.hostAddress
+        if (host == null) {
+            qrView.setImageDrawable(null)
+            return
+        }
+        val ttl = maxOf(1L, (pairing.qrTokenExpiresAtMs - nowMs) / 1000L)
+        val content = "tvrc://pair?host=$host&port=$DISCOVERY_CONTROL_PORT&token=$token&ttl=$ttl"
+        val size = 512
+        val hints = EnumMap<EncodeHintType, Any>(EncodeHintType::class.java).apply {
+            put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.M)
+            put(EncodeHintType.MARGIN, 1)
+        }
+        val matrix = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, size, size, hints)
+        val pixels = IntArray(size * size)
+        for (y in 0 until size) {
+            for (x in 0 until size) {
+                pixels[y * size + x] = if (matrix[x, y]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
+            }
+        }
+        val bitmap = android.graphics.Bitmap.createBitmap(pixels, size, size, android.graphics.Bitmap.Config.RGB_565)
+        qrView.setImageBitmap(bitmap)
+    }
+
+    /** 枚举网络接口取第一个站点内网 IPv4（与 DiscoveryServer 的内网判定一致）。 */
+    private fun primaryLanAddress(): InetAddress? {
+        return try {
+            NetworkInterface.getNetworkInterfaces().asSequence()
+                .filter { it.isUp && !it.isLoopback }
+                .flatMap { it.inetAddresses.asSequence() }
+                .firstOrNull { address ->
+                    !address.isLoopbackAddress && address is java.net.Inet4Address && address.isSiteLocalAddress
+                }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     private fun refreshReport() {
         reportView.text = CapabilityDetector.detect(this).toJson()

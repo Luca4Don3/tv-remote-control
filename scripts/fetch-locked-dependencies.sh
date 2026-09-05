@@ -59,8 +59,8 @@ fetch_locked \
     45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99
 fetch_locked \
     "https://dl.google.com/android/repository/repository2-1.xml" \
-    "$cache_dir/repository2-1.xml" 367919 \
-    ea0509d1f955495ed543d9b16edfb55758fc3df5177210b043580e6d563d0b32
+    "$cache_dir/repository2-1.xml" 371995 \
+    461e45d338c8969a89b4f8b05d8abd698a2b58403fe6d8c2cca241b4a502ee0a
 
 # 从仓库元数据提取 Android SDK License 文本，作为 platform-tools 的随包许可
 android_sdk_license="$vendor_dir/android-sdk-license.txt"

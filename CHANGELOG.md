@@ -4,6 +4,14 @@ This project follows `major.minor.patch` releases and `major.minor-rcN` release 
 
 ## Unreleased
 
+- Added a Rust protocol core (`core-rs`): framing aligned with the Kotlin `FrameCodec`, strict JSON matching `StrictJson`, HKDF-SHA256 + AES-256-GCM session crypto with direction separation, replay-window sequence protection, a minimal RFC 6455 WebSocket frame codec, and uniffi FFI bindings verified through cargo-ndk cross builds for all four Android ABIs.
+- Added the `text_commit` / `text_draft` protocol with AccessibilityService text injection (`ACTION_SET_TEXT`, API 21+), a new `textInput` capability bit, and a dedicated text command dispatcher with strictly increasing sequences.
+- Added QR pairing: a one-time 60-second token displayed as a `tvrc://pair` QR code on the TV replaces manual code entry without changing the SAS verification flow.
+- Added a plaintext WebSocket debug channel (port 47833) with application-layer end-to-end encryption (HKDF-derived directional keys, counter-bound AES-GCM, replay window), restricted to remote-control messages; intended for development debugging only.
+- Added the Android phone controller (`:controller`, Compose, minSdk 24): UDP discovery, TLS with TOFU/pinned fingerprints, pairing, remote control, text input, and a WS debug-channel client.
+- Extracted the pure-JVM `:protocol-core` module (protocol, auth transcripts, session manager) shared by the TV agent and the phone controller.
+- Added the API 19-36 compatibility matrix documenting every version fork and its UNVERIFIED hardware items.
+- Extended CI with a Rust core job and multi-module Android gates.
 - Added Android, Zig, and Swift regression coverage plus cross-platform CI and a unified local quality gate.
 - Improved desktop operation timeouts, event-loop failure handling, credential migration visibility, process cleanup diagnostics, and protocol framing separation.
 - Tightened Android H.264 configuration, identifier, TLS-policy, media-writer, and encoder cleanup handling.
