@@ -232,6 +232,9 @@ fn addMbedTls(
         .linkage = .static,
         .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .strip = optimize != .Debug }),
     });
+    if (ios_sysroot) |sdk| {
+        crypto.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) });
+    }
     crypto.root_module.addIncludePath(include);
     crypto.root_module.addIncludePath(library);
     crypto.root_module.addCSourceFiles(.{
@@ -307,6 +310,9 @@ fn configureTlsConsumer(
     const ios_flags: []const []const u8 = if (ios_sysroot) |sdk| &.{
         "-std=c11", prefix_map, b.fmt("-isysroot{s}", .{sdk}),
     } else &.{ "-std=c11", prefix_map };
+    if (ios_sysroot) |sdk| {
+        consumer.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) });
+    }
     consumer.root_module.addIncludePath(b.path("src"));
     consumer.root_module.addIncludePath(b.path("include"));
     consumer.root_module.addIncludePath(b.path("vendor/mbedtls-3.6.7/include"));
