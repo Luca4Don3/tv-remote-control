@@ -41,19 +41,13 @@ final class WsDebugClient: @unchecked Sendable {
             try upgrade()
             let clientRandom = try Self.secureRandom(count: 32)
             let serverRandom = try helloExchange(clientRandom: clientRandom)
-            var pskBytes = [UInt8](psk)
-            var clientBytes = [UInt8](clientRandom)
-            var serverBytes = [UInt8](serverRandom)
             self.crypto = try SessionCrypto(
-                psk: pskBytes,
-                clientRandom: clientBytes,
-                serverRandom: serverBytes,
+                psk: psk,
+                clientRandom: clientRandom,
+                serverRandom: serverRandom,
                 isClient: true,
                 replayWindowBits: 64
             )
-            for index in pskBytes.indices { pskBytes[index] = 0 }
-            for index in clientBytes.indices { clientBytes[index] = 0 }
-            for index in serverBytes.indices { serverBytes[index] = 0 }
         } catch {
             closeSocket(socketFD)
             throw error
@@ -93,13 +87,13 @@ final class WsDebugClient: @unchecked Sendable {
         let requestID = "c-\(UInt64.random(in: 1...UInt64.max))"
         let envelope = "{\"protocolVersion\":1,\"requestId\":\"\(requestID)\","
             + "\"sessionId\":\"\",\"sequence\":1,\"type\":\"\(type)\",\"payload\":\(payload)}"
-        let sealed = try crypto.seal(isClient: true, plaintext: Array(envelope.utf8), aad: [])
+        let sealed = try crypto.seal(isClient: true, plaintext: Data(envelope.utf8), aad: Data())
         let frame = try wsCodec.encodeClient(opcode: 2, payload: sealed)
         try writeAll(frame)
         while true {
             let reply = try readFrame()
             if reply.opcode == 9 { // ping → pong
-                let pong = try wsCodec.encodeClient(opcode: 10, payload: reply.payload)
+                let pong = try wsCodec.encodeClient(opcode: 10, payload: Data(reply.payload))
                 try writeAll(pong)
                 continue
             }
@@ -109,7 +103,7 @@ final class WsDebugClient: @unchecked Sendable {
                 throw WsError.protocolError("replayed debug message")
             }
             let plaintext = try crypto.open(
-                isClient: true, ciphertext: reply.payload, counter: counter, aad: [])
+                isClient: true, ciphertext: Data(reply.payload), counter: counter, aad: Data())
             if let text = String(bytes: plaintext, encoding: .utf8) {
                 // ACK 与心跳 ping 共用循环；收到 command_ack 即返回
                 if text.contains("\"type\":\"command_ack\"") {
@@ -146,7 +140,7 @@ final class WsDebugClient: @unchecked Sendable {
         let hello = "{\"protocolVersion\":1,\"requestId\":\"ws-hello-1\",\"sessionId\":\"\","
             + "\"sequence\":1,\"type\":\"ws_hello\",\"payload\":{\"controllerId\":\"\","
             + "\"clientRandom\":\"\(clientRandom.map { String(format: "%02x", $0) }.joined())\"}}"
-        let helloFrame = try wsCodec.encodeClient(opcode: 1, payload: Array(hello.utf8))
+        let helloFrame = try wsCodec.encodeClient(opcode: 1, payload: Data(hello.utf8))
         try writeAll(helloFrame)
         let ackFrame = try readFrame()
         guard ackFrame.opcode == 1,
