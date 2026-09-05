@@ -143,7 +143,12 @@ jobs:
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-global-cache-ios
           ZIG_LOCAL_CACHE_DIR: ${{ runner.temp }}/zig-local-cache-ios
-        run: zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-ios --prefix "${RUNNER_TEMP}/zig-ios-core"
+          SDKROOT: ${{ runner.temp }}/iphoneos-sdk
+        run: |
+          xcrun -sdk iphoneos --show-sdk-path
+          mkdir -p "${SDKROOT}"
+          cp -R "$(xcrun -sdk iphoneos --show-sdk-path)"/* "${SDKROOT}/" 2>/dev/null || true
+          zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-ios --prefix "${RUNNER_TEMP}/zig-ios-core"
       - name: ARM64 core and complete app link
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-global-cache
