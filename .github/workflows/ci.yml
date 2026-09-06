@@ -168,7 +168,7 @@ jobs:
           # Xcode 16+ 的 compiler-rt 在 toolchain 而非 SDK，库名拆分为 *_runtime 变体
           CLANG_RT_A="$(find "$(xcrun -f clang | sed 's|/bin/clang||')/../lib" -name "libclang_rt.ios*.a" 2>/dev/null | head -1)"
           [ -z "$CLANG_RT_A" ] && CLANG_RT_A="$(find /Applications/Xcode.app/Contents/Developer/Toolchains -name "libclang_rt.ios*.a" 2>/dev/null | head -1)"
-          [ -z "$CLANG_RT_A" ] && { echo "libclang_rt.ios*.a not found"; exit 1; }
+          if [ -z "$CLANG_RT_A" ]; then echo "libclang_rt.ios*.a not found"; exit 1; fi
           echo "clang_rt: $CLANG_RT_A"
           CLANG_RT_LIB="$(basename "$CLANG_RT_A" | sed 's/^lib//;s/\.a$//')"
           swiftc -swift-version 6 -parse-as-library \
@@ -203,9 +203,9 @@ jobs:
           echo "Using simulator UDID: $DEVICE"
           echo "--- available schemes ---"
           xcodebuild -list
-          SCHEME="$(xcodebuild -list 2>/dev/null | sed -n '/Schemes:/,$p' | grep -E "IOSControllerTests" | head -1 | xargs)"
+          SCHEME="$(xcodebuild -list 2>/dev/null | sed -n '/Schemes:/,$p' | grep -E "IOSControllerTests" | head -1 | xargs || true)"
           # Xcode 15 对 SwiftPM 包只生成「包名」scheme（含全部测试目标）
-          [ -z "$SCHEME" ] && SCHEME="TVRemoteControllerIOS"
+          if [ -z "$SCHEME" ]; then SCHEME="TVRemoteControllerIOS"; fi
           echo "Using scheme: $SCHEME"
           xcodebuild test \
             -scheme "$SCHEME" \
