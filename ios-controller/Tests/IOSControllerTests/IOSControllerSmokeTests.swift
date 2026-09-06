@@ -82,10 +82,10 @@ final class IOSControllerSmokeTests: XCTestCase {
         let credentialID = Data("xctest-credential-\(UUID().uuidString)".utf8)
         let value = Self.randomBytes(32)
         try store.putBlob(credentialID: credentialID, value: value)
-        let restored = try store.getBlob(credentialID)
+        let restored = try store.getBlob(credentialID: credentialID)
         XCTAssertEqual(restored, value, "Keychain 写读必须一致（模拟器）")
-        try store.removeBlob(credentialID)
-        XCTAssertNil(try store.getBlob(credentialID), "移除后读取返回空")
+        try store.removeBlob(credentialID: credentialID)
+        XCTAssertNil(try store.getBlob(credentialID: credentialID), "移除后读取返回空")
     }
 
     // MARK: - WS JSON 转义（对齐 Kotlin StrictJson.appendQuoted）
