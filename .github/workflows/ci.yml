@@ -203,8 +203,9 @@ jobs:
           echo "Using simulator UDID: $DEVICE"
           echo "--- available schemes ---"
           xcodebuild -list
-          SCHEME="$(xcodebuild -list 2>/dev/null | sed -n '/Schemes:/,$p' | grep -E "IOSControllerTests|IOSController" | head -1 | xargs)"
-          [ -z "$SCHEME" ] && { echo "no suitable scheme found"; exit 1; }
+          SCHEME="$(xcodebuild -list 2>/dev/null | sed -n '/Schemes:/,$p' | grep -E "IOSControllerTests" | head -1 | xargs)"
+          # Xcode 15 对 SwiftPM 包只生成「包名」scheme（含全部测试目标）
+          [ -z "$SCHEME" ] && SCHEME="TVRemoteControllerIOS"
           echo "Using scheme: $SCHEME"
           xcodebuild test \
             -scheme "$SCHEME" \
