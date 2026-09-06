@@ -33,6 +33,9 @@ final class WsDebugClient: @unchecked Sendable {
     private var wsCodec = WsCodec()
     private var serverCounter: UInt64 = 0
     private var heartbeat: DispatchSourceTimer?
+    /// sendCommand 全函数互斥：心跳（utility 队列）与 UI 并发调用时请求/响应严格串行，
+    /// 杜绝心跳吃掉命令 ack 后死等读超时（对齐 Kotlin writeLock 语义）
+    private let ioLock = NSLock()
 
     /// `psk` 为配对下发的 32B secret；`controllerId` 为配对下发的 32 hex 标识；
     /// 二者均进入 ws_hello 与加密信封（agent 服务端逐字校验）。
@@ -91,6 +94,8 @@ final class WsDebugClient: @unchecked Sendable {
     }
 
     private func sendCommand(type: String, payload: String) throws -> String {
+        ioLock.lock()
+        defer { ioLock.unlock() }
         let requestID = "c-\(UInt64.random(in: 1...UInt64.max))"
         let envelope = "{\"protocolVersion\":1,\"requestId\":\"\(requestID)\","
             + "\"sessionId\":\"\(controllerId)\",\"sequence\":1,\"type\":\"\(type)\",\"payload\":\(payload)}"
