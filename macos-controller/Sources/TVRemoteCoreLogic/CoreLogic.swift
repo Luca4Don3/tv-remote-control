@@ -1,5 +1,4 @@
 import Foundation
-import TvRemoteCoreZig
 
 public enum PendingOperationKind: Sendable, Equatable {
     case discovery
