@@ -234,7 +234,8 @@ class WebSocketDebugServer(
                 WsFrameCodec.OPCODE_TEXT, WsFrameCodec.OPCODE_BINARY -> {
                     if (elapsedMs() - lastPingAtMs >= HEARTBEAT_INTERVAL_MS) {
                         val ping = serverHelloPing(session)
-                        WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_TEXT, ping)
+                        // 加密信封是二进制载荷：TEXT 帧的合法 UTF-8 约束会被 client 解码器拒
+                        WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_BINARY, ping)
                         lastPingAtMs = elapsedMs()
                     }
                     handleEncryptedMessage(socket, session, frame.payload, dispatcher, textDispatcher, limiter) ?: return

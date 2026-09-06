@@ -30,8 +30,9 @@ final class WsDebugClient: @unchecked Sendable {
     private let port: UInt16
     private let socketFD: Int32
     private let crypto: SessionCrypto
-    private var wsCodec = WsCodec()
+    private var wsCodec = WsCodec.withRole(role: .client)
     private var serverCounter: UInt64 = 0
+    private var outboundSequence: UInt64 = 0
     private var heartbeat: DispatchSourceTimer?
     /// sendCommand 全函数互斥：心跳（utility 队列）与 UI 并发调用时请求/响应严格串行，
     /// 杜绝心跳吃掉命令 ack 后死等读超时（对齐 Kotlin writeLock 语义）
@@ -48,7 +49,7 @@ final class WsDebugClient: @unchecked Sendable {
         self.heartbeat = nil
         let fd = try Self.openTcp(host: host, port: port)
         self.socketFD = fd
-        var ws = WsCodec()
+        var ws = WsCodec.withRole(role: .client)
         do {
             try Self.upgrade(fd: fd, host: host, port: port)
             let clientRandom = try Self.secureRandom(count: 32)
@@ -68,8 +69,21 @@ final class WsDebugClient: @unchecked Sendable {
         // 15s 加密心跳保活（agent 读超时 45s）
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
         timer.schedule(deadline: .now() + 15, repeating: 15)
+        // agent 对 client 的 ping 不回 ack（handleEncryptedMessage ack=null）——等 ack
+        // 会永久持锁（iOS 无读超时）。fire-and-forget：只写加密 ping，不读。
         timer.setEventHandler { [weak self] in
-            _ = try? self?.sendCommand(type: "ping", payload: "{}")
+            guard let self = self else { return }
+            do {
+                let ping = "{\"protocolVersion\":1,\"requestId\":\"hb-\(UInt64.random(in: 1...UInt64.max))\","
+                    + "\"sessionId\":\"\(self.controllerId)\",\"sequence\":0,\"type\":\"ping\",\"payload\":{}}"
+                let sealed = try self.crypto.seal(isClient: true, plaintext: Data(ping.utf8), aad: Data())
+                self.ioLock.lock()
+                defer { self.ioLock.unlock() }
+                let frame = try self.wsCodec.encodeClient(opcode: 2, payload: sealed)
+                try Self.writeAll(fd: self.socketFD, frame)
+            } catch {
+                self.close()
+            }
         }
         timer.resume()
         self.heartbeat = timer
@@ -97,8 +111,10 @@ final class WsDebugClient: @unchecked Sendable {
         ioLock.lock()
         defer { ioLock.unlock() }
         let requestID = "c-\(UInt64.random(in: 1...UInt64.max))"
+        // agent 端要求命令序号严格递增（首个成功后 sequence<=last 全部 REJECTED）
+        outboundSequence += 1
         let envelope = "{\"protocolVersion\":1,\"requestId\":\"\(requestID)\","
-            + "\"sessionId\":\"\(controllerId)\",\"sequence\":1,\"type\":\"\(type)\",\"payload\":\(payload)}"
+            + "\"sessionId\":\"\(controllerId)\",\"sequence\":\(outboundSequence),\"type\":\"\(type)\",\"payload\":\(payload)}"
         let sealed = try crypto.seal(isClient: true, plaintext: Data(envelope.utf8), aad: Data())
         let frame = try wsCodec.encodeClient(opcode: 2, payload: sealed)
         try Self.writeAll(fd: socketFD, frame)
@@ -186,6 +202,10 @@ final class WsDebugClient: @unchecked Sendable {
             if fd < 0 { continue }
             var one: Int32 = 1
             _ = setsockopt(fd, Int32(IPPROTO_TCP), TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
+            // 读超时 45s（对齐 agent 端读超时语义与 Kotlin soTimeout）——
+            // 无读超时时锁内读循环可永久阻塞（fire-and-forget 心跳也不能依赖无限读）
+            var tv = timeval(tv_sec: 45, tv_usec: 0)
+            _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
             let connected = withUnsafePointer(to: info.pointee.ai_addr) { pointer -> Bool in
                 pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { address in
                     connect(fd, address, info.pointee.ai_addrlen) == 0

@@ -289,6 +289,11 @@ uint64_t uniffi_tvremote_core_fn_constructor_wscodec_new(RustCallStatus *_Nonnul
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_TVREMOTE_CORE_FN_CONSTRUCTOR_WSCODEC_WITH_ROLE
+#define UNIFFI_FFIDEF_UNIFFI_TVREMOTE_CORE_FN_CONSTRUCTOR_WSCODEC_WITH_ROLE
+uint64_t uniffi_tvremote_core_fn_constructor_wscodec_with_role(RustBuffer role, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_TVREMOTE_CORE_FN_METHOD_WSCODEC_ENCODE
 #define UNIFFI_FFIDEF_UNIFFI_TVREMOTE_CORE_FN_METHOD_WSCODEC_ENCODE
 RustBuffer uniffi_tvremote_core_fn_method_wscodec_encode(uint64_t ptr, uint8_t opcode, RustBuffer payload, RustCallStatus *_Nonnull out_status
@@ -609,6 +614,12 @@ uint16_t uniffi_tvremote_core_checksum_constructor_sessioncrypto_new(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_TVREMOTE_CORE_CHECKSUM_CONSTRUCTOR_WSCODEC_NEW
 #define UNIFFI_FFIDEF_UNIFFI_TVREMOTE_CORE_CHECKSUM_CONSTRUCTOR_WSCODEC_NEW
 uint16_t uniffi_tvremote_core_checksum_constructor_wscodec_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_TVREMOTE_CORE_CHECKSUM_CONSTRUCTOR_WSCODEC_WITH_ROLE
+#define UNIFFI_FFIDEF_UNIFFI_TVREMOTE_CORE_CHECKSUM_CONSTRUCTOR_WSCODEC_WITH_ROLE
+uint16_t uniffi_tvremote_core_checksum_constructor_wscodec_with_role(void
     
 );
 #endif
