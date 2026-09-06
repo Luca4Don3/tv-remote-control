@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import TvRemoteCoreZig
 
 enum KeychainStoreError: Error {
     case invalidRecord
