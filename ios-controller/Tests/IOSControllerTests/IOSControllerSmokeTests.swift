@@ -1,6 +1,6 @@
 import XCTest
 import Foundation
-import TvremoteCoreFFI
+import tvremote_coreFFI
 import TvRemoteCoreZig
 @testable import IOSController
 
