@@ -43,16 +43,45 @@ pub enum WsMessage {
 }
 
 /// 增量解码器：喂 TCP 字节片段，产出完整消息（自动处理分片）。
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct WsDecoder {
     buf: Vec<u8>,
     fragments: Vec<u8>,
     fragment_opcode: Option<u8>,
+    /// RFC 6455 掩码方向：服务端视角入向帧（来自客户端）必须掩码；
+    /// 客户端视角入向帧（来自服务端）不得掩码。
+    require_masked: bool,
+}
+
+impl Default for WsDecoder {
+    fn default() -> Self {
+        WsDecoder::server()
+    }
 }
 
 impl WsDecoder {
+    /// 服务端视角：入向（客户端→服务端）帧必须掩码。
     pub fn new() -> Self {
-        WsDecoder::default()
+        Self::server()
+    }
+
+    pub fn server() -> Self {
+        WsDecoder {
+            buf: Vec::new(),
+            fragments: Vec::new(),
+            fragment_opcode: None,
+            require_masked: true,
+        }
+    }
+
+    /// 客户端视角：入向（服务端→客户端）帧不得掩码。
+    pub fn client() -> Self {
+        WsDecoder {
+            buf: Vec::new(),
+            fragments: Vec::new(),
+            fragment_opcode: None,
+            require_masked: false,
+        }
     }
 
     /// 喂数据；返回完成的消息（一次最多一条）。
@@ -71,8 +100,12 @@ impl WsDecoder {
         }
         let opcode = header[0] & 0x0F;
         let masked = header[1] & 0x80 != 0;
-        if !masked {
-            return Err(WsError::Protocol("client frames must be masked".into()));
+        if masked != self.require_masked {
+            return Err(WsError::Protocol(if self.require_masked {
+                "client frames must be masked".into()
+            } else {
+                "server frames must not be masked".into()
+            }));
         }
         let mut len = (header[1] & 0x7F) as usize;
         if len == 126 {
@@ -89,13 +122,22 @@ impl WsDecoder {
         if len > MAX_WS_PAYLOAD {
             return Err(WsError::TooLarge);
         }
-        let Some(mask) = self.read_n(4)? else { return Ok(None) };
+        // 仅掩码帧携带 4B 掩码键；未掩码帧（服务端出向）没有——无条件读会吞 payload
+        let mask = if masked {
+            let Some(m) = self.read_n(4)? else { return Ok(None) };
+            Some(m)
+        } else {
+            None
+        };
         let Some(masked_payload) = self.read_n(len)? else { return Ok(None) };
-        let payload: Vec<u8> = masked_payload
-            .iter()
-            .enumerate()
-            .map(|(i, b)| b ^ mask[i % 4])
-            .collect();
+        let payload: Vec<u8> = match (masked, mask) {
+            (true, Some(mask)) => masked_payload
+                .iter()
+                .enumerate()
+                .map(|(i, b)| b ^ mask[i % 4])
+                .collect(),
+            _ => masked_payload,
+        };
 
         match opcode {
             OPCODE_CONT => {
@@ -272,6 +314,23 @@ mod tests {
         assert!(dec.push(&out).is_err());
     }
 
+    /// 客户端视角：解析服务端出向帧（不掩码）；掩码帧反而必须被拒。
+    #[test]
+    fn client_view_accepts_unmasked_rejects_masked() {
+        // 服务端出向：不掩码 binary 帧
+        let mut frame = vec![0x82, 0x05];
+        frame.extend_from_slice(b"hello");
+        let mut dec = WsDecoder::client();
+        let msg = dec.push(&frame).unwrap().expect("complete frame");
+        assert_eq!(msg, WsMessage::Binary(b"hello".to_vec()));
+
+        // 客户端掩码帧从客户端视角必须被拒（方向反转）
+        let mask = [0x11, 0x22, 0x33, 0x44];
+        let masked = encode_client_frame(1, b"world", &mask).unwrap();
+        let mut dec2 = WsDecoder::client();
+        assert!(dec2.push(&masked).is_err());
+    }
+
     #[test]
     fn ping_decoded() {
         let frame = mask_frame(OPCODE_PING, b"x", true);
@@ -304,3 +363,4 @@ mod tests {
         assert_eq!(&big[..4], &[0x82, 126, 0x00, 0x7E]);
     }
 }
+

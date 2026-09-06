@@ -123,6 +123,13 @@ pub struct WsCodec {
     decoder: Mutex<WsDecoder>,
 }
 
+/// 解码视角：服务端（入向帧必须掩码）或客户端（入向帧不得掩码）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum WsCodecRole {
+    Server,
+    Client,
+}
+
 /// 解码出的一条完整 WS 消息。
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct WsFrame {
@@ -142,6 +149,17 @@ impl WsCodec {
     #[uniffi::constructor]
     pub fn new() -> Self {
         WsCodec { decoder: Mutex::new(WsDecoder::new()) }
+    }
+
+    /// 按视角构造：服务端视角解析客户端帧（必须掩码），
+    /// 客户端视角解析服务端帧（不得掩码）。
+    #[uniffi::constructor]
+    pub fn with_role(role: WsCodecRole) -> Self {
+        let decoder = match role {
+            WsCodecRole::Server => WsDecoder::server(),
+            WsCodecRole::Client => WsDecoder::client(),
+        };
+        WsCodec { decoder: Mutex::new(decoder) }
     }
 
     /// 喂入 TCP 字节片段，返回本次解出的完整消息（可能为空）。
