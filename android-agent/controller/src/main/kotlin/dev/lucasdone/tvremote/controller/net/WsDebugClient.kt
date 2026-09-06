@@ -70,10 +70,25 @@ class WsDebugClient(
         val keys = DebugSessionCrypto.deriveSessionKeys(secret, clientRandom, serverRandom)
         clientCipher = DebugSessionCrypto.DirectionCipher(keys.clientToServer)
         serverCipher = DebugSessionCrypto.DirectionCipher(keys.serverToClient)
-        // 15s 加密心跳：agent 端读超时 45s，闲置也会保持链路活跃
+        // 15s 加密保活：agent 对 client 的 ping 不回 ack（handleEncryptedMessage ack=null），
+        // 等待 ack 必然 45s 读超时——fire-and-forget 只写不读；写侧与命令共享 io 互斥。
+        // 收到的服务端加密 ping 由命令读循环消化（type=ping continue）。
         heartbeat.scheduleWithFixedDelay({
             try {
-                sendCommand("ping", jsonObject())
+                synchronized(writeLock) {
+                    val cipher = clientCipher ?: return@synchronized
+                    val ping = ProtocolCodec.encode(
+                        ProtocolEnvelope(
+                            protocolVersion = ProtocolCodec.VERSION,
+                            requestId = nextRequestId(),
+                            sessionId = controllerId,
+                            sequence = 0,
+                            type = "ping",
+                            payload = jsonObject(),
+                        ),
+                    )
+                    WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_BINARY, cipher.seal(ping))
+                }
             } catch (_: Exception) {
                 runCatching { close() }
             }
@@ -104,18 +119,19 @@ class WsDebugClient(
      * 串行化代价：并发调用最多等待一次心跳往返（毫秒级）。
      */
     private fun sendCommand(type: String, payload: JsonValue.ObjectValue): Ack = synchronized(writeLock) {
+        // agent 端 KeyStateTracker/TextCommandDispatcher 要求命令序号严格递增（首个成功后
+        // sequence<=last 全部 REJECTED）——信封必须携带递增值
         val message = ProtocolCodec.encode(
             ProtocolEnvelope(
                 protocolVersion = ProtocolCodec.VERSION,
                 requestId = nextRequestId(),
                 sessionId = controllerId,
-                sequence = 1,
+                sequence = ++outboundSequence,
                 type = type,
                 payload = payload,
             ),
         )
         val cipher = clientCipher ?: throw IllegalStateException("not ready")
-        outboundSequence += 1
         val sealed = cipher.seal(message)
         WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_BINARY, sealed)
         while (true) {
