@@ -201,11 +201,16 @@ jobs:
           cp core-rs/bindings/swift/tvremote_core.swift ios-controller/Sources/RustBindings/
           DEVICE="$(xcrun simctl list devices available | grep -m1 'iPhone' | sed -E 's/.*\(([A-F0-9-]+)\).*/\1/')"
           echo "Using simulator UDID: $DEVICE"
+          echo "--- available schemes ---"
+          xcodebuild -list
+          SCHEME="$(xcodebuild -list 2>/dev/null | sed -n '/Schemes:/,$p' | grep -E "IOSControllerTests|IOSController" | head -1 | xargs)"
+          [ -z "$SCHEME" ] && { echo "no suitable scheme found"; exit 1; }
+          echo "Using scheme: $SCHEME"
           xcodebuild test \
-            -scheme IOSControllerTests \
+            -scheme "$SCHEME" \
             -destination "id=$DEVICE" \
             -derivedDataPath "${RUNNER_TEMP}/ios-xcode-derived" \
-            2>&1 | tail -40
+            2>&1 | tail -60
       - name: ARM64 core and complete app link
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-global-cache
