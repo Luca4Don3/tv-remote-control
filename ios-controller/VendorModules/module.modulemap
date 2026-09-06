@@ -1,0 +1,5 @@
+module TvRemoteCoreZig {
+    header "../../windows-controller/include/tv_remote_core.h"
+    header "../../windows-controller/include/tvrc_credential_store.h"
+    export *
+}

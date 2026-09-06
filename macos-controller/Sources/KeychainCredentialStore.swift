@@ -1,4 +1,5 @@
 import Foundation
+import TvRemoteCoreZig
 import Security
 
 enum KeychainStoreError: Error {

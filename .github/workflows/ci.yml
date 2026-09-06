@@ -143,7 +143,7 @@ jobs:
           swiftc -swift-version 6 -typecheck \
             -target arm64-apple-ios16.0-simulator \
             -sdk "$(xcrun -sdk iphonesimulator --show-sdk-path)" \
-            -import-objc-header windows-controller/include/tv_remote_core.h \
+            -Xcc -fmodule-map-file=ios-controller/VendorModules/module.modulemap \
             -Xcc -fmodule-map-file=core-rs/bindings/swift/tvremote_coreFFI.modulemap \
             -I core-rs/bindings/swift \
             ios-controller/Sources/ControllerApp.swift \
@@ -161,18 +161,20 @@ jobs:
           export TVRC_IOS_SDK_PATH="$(xcrun -sdk iphoneos --show-sdk-path)"
           echo "iOS SDK: $TVRC_IOS_SDK_PATH"
           zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-ios --prefix "${RUNNER_TEMP}/zig-ios-core"
+          export TVRC_IOS_SDK_PATH="$(xcrun -sdk iphonesimulator --show-sdk-path)"
+          zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-ios-simulator --prefix "${RUNNER_TEMP}/zig-ios-sim-core"
       - name: iOS full link gate (SwiftUI + Zig core + Rust core)
         run: |
           # Xcode 16+ 的 compiler-rt 在 toolchain 而非 SDK，库名拆分为 *_runtime 变体
           CLANG_RT_A="$(find "$(xcrun -f clang | sed 's|/bin/clang||')/../lib" -name "libclang_rt.ios*.a" 2>/dev/null | head -1)"
           [ -z "$CLANG_RT_A" ] && CLANG_RT_A="$(find /Applications/Xcode.app/Contents/Developer/Toolchains -name "libclang_rt.ios*.a" 2>/dev/null | head -1)"
-          [ -z "$CLANG_RT_A" ] && { echo "libclang_rt.ios*.a not found"; exit 1; }
+          if [ -z "$CLANG_RT_A" ]; then echo "libclang_rt.ios*.a not found"; exit 1; fi
           echo "clang_rt: $CLANG_RT_A"
           CLANG_RT_LIB="$(basename "$CLANG_RT_A" | sed 's/^lib//;s/\.a$//')"
           swiftc -swift-version 6 -parse-as-library \
             -target arm64-apple-ios16.0 \
             -sdk "$(xcrun -sdk iphoneos --show-sdk-path)" \
-            -import-objc-header windows-controller/include/tv_remote_core.h \
+            -Xcc -fmodule-map-file=ios-controller/VendorModules/module.modulemap \
             -Xcc -fmodule-map-file=core-rs/bindings/swift/tvremote_coreFFI.modulemap \
             -I core-rs/bindings/swift \
             ios-controller/Sources/ControllerApp.swift \
@@ -186,6 +188,30 @@ jobs:
             -framework SwiftUI -framework UIKit \
             -o "${RUNNER_TEMP}/TVRemoteController-ios-sim"
           file "${RUNNER_TEMP}/TVRemoteController-ios-sim"
+      - name: iOS XCTest run gate (SwiftPM on iOS Simulator)
+        run: |
+          set -o pipefail
+          # SwiftPM 构建前提：静态库 + 头/modulemap（SwiftPM systemLibrary 要求标准名 module.modulemap）
+          mkdir -p ios-controller/VendorLib ios-controller/Sources/RustBindings ios-controller/Sources/ZigCore ios-controller/VendorModules/Rust
+          cp core-rs/target/aarch64-apple-ios-sim/release/libtvremote_core.a ios-controller/VendorLib/
+          cp "${RUNNER_TEMP}/zig-ios-sim-core/lib/"lib*.a ios-controller/VendorLib/
+          cp core-rs/bindings/swift/tvremote_coreFFI.h ios-controller/VendorModules/Rust/
+          cp core-rs/bindings/swift/tvremote_coreFFI.modulemap ios-controller/VendorModules/Rust/module.modulemap
+          cp core-rs/bindings/swift/tvremote_core.swift ios-controller/Sources/RustBindings/
+          cp macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift ios-controller/Sources/ZigCore/
+          DEVICE="$(xcrun simctl list devices available | grep -m1 'iPhone' | sed -E 's/.*\(([A-F0-9-]+)\).*/\1/')"
+          echo "Using simulator UDID: $DEVICE"
+          echo "--- available schemes ---"
+          xcodebuild -list
+          SCHEME="$(xcodebuild -list 2>/dev/null | sed -n '/Schemes:/,$p' | grep -E "IOSControllerTests" | head -1 | xargs || true)"
+          # Xcode 15 对 SwiftPM 包只生成「包名」scheme（含全部测试目标）
+          if [ -z "$SCHEME" ]; then SCHEME="TVRemoteControllerIOS"; fi
+          echo "Using scheme: $SCHEME"
+          xcodebuild test \
+            -scheme "$SCHEME" \
+            -destination "id=$DEVICE" \
+            -derivedDataPath "${RUNNER_TEMP}/ios-xcode-derived" \
+            2>&1 | tail -60
       - name: ARM64 core and complete app link
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-global-cache
@@ -198,7 +224,7 @@ jobs:
             macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift \
             macos-controller/Sources/*.swift \
             -L "${RUNNER_TEMP}/mac-core/lib" -ltv_remote_core \
-            -import-objc-header windows-controller/include/tv_remote_core.h \
+            -Xcc -fmodule-map-file=ios-controller/VendorModules/module.modulemap \
             -framework SwiftUI -framework AppKit -framework Security \
             -framework AVFoundation -framework CoreImage -framework CoreMedia \
             -framework MetalKit -framework VideoToolbox \

@@ -33,3 +33,6 @@ windows-controller/zig-pkg/
 /PROMPT-*.md
 .pi/
 **/.pi/
+# iOS XCTest 门禁的 CI 产物（构建期填充）
+/ios-controller/VendorLib/
+/ios-controller/Sources/RustBindings/
