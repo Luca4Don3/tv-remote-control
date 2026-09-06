@@ -855,6 +855,19 @@ public convenience init() {
     }
 
     
+    /**
+     * 按视角构造：服务端视角解析客户端帧（必须掩码），
+     * 客户端视角解析服务端帧（不得掩码）。
+     */
+public static func withRole(role: WsCodecRole) -> WsCodec  {
+    return try!  FfiConverterTypeWsCodec_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_tvremote_core_fn_constructor_wscodec_with_role(
+        FfiConverterTypeWsCodecRole_lower(role),uniffiCallStatus
+    )
+})
+}
+    
 
     
     /**
@@ -1111,6 +1124,75 @@ public func FfiConverterTypeFfiError_lower(_ value: FfiError) -> RustBuffer {
     return FfiConverterTypeFfiError.lower(value)
 }
 
+
+/**
+ * 解码视角：服务端（入向帧必须掩码）或客户端（入向帧不得掩码）。
+ */
+
+public enum WsCodecRole: Equatable, Hashable {
+    
+    case server
+    case client
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension WsCodecRole: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWsCodecRole: FfiConverterRustBuffer {
+    typealias SwiftType = WsCodecRole
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WsCodecRole {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .server
+        
+        case 2: return .client
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: WsCodecRole, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .server:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .client:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWsCodecRole_lift(_ buf: RustBuffer) throws -> WsCodecRole {
+    return try FfiConverterTypeWsCodecRole.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWsCodecRole_lower(_ value: WsCodecRole) -> RustBuffer {
+    return FfiConverterTypeWsCodecRole.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1173,6 +1255,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_tvremote_core_checksum_constructor_wscodec_new() != 58134) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_tvremote_core_checksum_constructor_wscodec_with_role() != 16502) {
         return InitializationResult.apiChecksumMismatch
     }
 
