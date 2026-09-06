@@ -161,6 +161,8 @@ jobs:
           export TVRC_IOS_SDK_PATH="$(xcrun -sdk iphoneos --show-sdk-path)"
           echo "iOS SDK: $TVRC_IOS_SDK_PATH"
           zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-ios --prefix "${RUNNER_TEMP}/zig-ios-core"
+          export TVRC_IOS_SDK_PATH="$(xcrun -sdk iphonesimulator --show-sdk-path)"
+          zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-ios-simulator --prefix "${RUNNER_TEMP}/zig-ios-sim-core"
       - name: iOS full link gate (SwiftUI + Zig core + Rust core)
         run: |
           # Xcode 16+ 的 compiler-rt 在 toolchain 而非 SDK，库名拆分为 *_runtime 变体
@@ -186,6 +188,21 @@ jobs:
             -framework SwiftUI -framework UIKit \
             -o "${RUNNER_TEMP}/TVRemoteController-ios-sim"
           file "${RUNNER_TEMP}/TVRemoteController-ios-sim"
+      - name: iOS XCTest run gate (SwiftPM on iOS Simulator)
+        run: |
+          set -o pipefail
+          # 供 Package.swift 的 systemLibrary 链接：Rust sim 静态库 + Zig sim 静态库（含 mbedTLS）
+          mkdir -p ios-controller/VendorLib ios-controller/Sources/RustBindings
+          cp core-rs/target/aarch64-apple-ios-sim/release/libtvremote_core.a ios-controller/VendorLib/
+          cp "${RUNNER_TEMP}/zig-ios-sim-core/lib/"lib*.a ios-controller/VendorLib/
+          cp core-rs/bindings/swift/tvremote_core.swift ios-controller/Sources/RustBindings/
+          DEVICE="$(xcrun simctl list devices available | grep -m1 'iPhone' | sed -E 's/.*\(([A-F0-9-]+)\).*/\1/')"
+          echo "Using simulator UDID: $DEVICE"
+          xcodebuild test \
+            -scheme IOSControllerTests \
+            -destination "id=$DEVICE" \
+            -derivedDataPath "${RUNNER_TEMP}/ios-xcode-derived" \
+            2>&1 | tail -40
       - name: ARM64 core and complete app link
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-global-cache

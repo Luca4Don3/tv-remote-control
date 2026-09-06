@@ -85,28 +85,7 @@ final class WsDebugClient: @unchecked Sendable {
     }
 
     func sendText(_ text: String, draft: Bool) throws -> String {
-        // JSON escaping complete (aligned with Kotlin StrictJson.appendQuoted): quotes/backslashes/control characters all handled,
-        // server-side StrictJson rejects unescaped control characters
-        var escaped = String()
-        escaped.reserveCapacity(text.count)
-        for scalar in text.unicodeScalars {
-            switch scalar {
-            case "\"": escaped += "\\\""
-            case "\\": escaped += "\\\\"
-            case "\u{0008}": escaped += "\\b"
-            case "\u{000C}": escaped += "\\f"
-            case "\n": escaped += "\\n"
-            case "\r": escaped += "\\r"
-            case "\t": escaped += "\\t"
-            default:
-                if scalar.value < 0x20 {
-                    escaped += String(format: "\\u%04x", scalar.value)
-                } else {
-                    escaped.unicodeScalars.append(scalar)
-                }
-            }
-        }
-        let payload = "{\"text\":\"\(escaped)\"}"
+        let payload = "{\"text\":\"\(WsJsonEscaping.escape(text))\"}"
         return try sendCommand(type: draft ? "text_draft" : "text_commit", payload: payload)
     }
 
@@ -298,3 +277,31 @@ final class WsDebugClient: @unchecked Sendable {
     }
 }
 
+
+
+/// JSON 字符串转义（对齐 Kotlin StrictJson.appendQuoted）：引号/反斜杠/控制字符全处理，
+/// 服务端 StrictJson 拒绝未转义控制字符。
+enum WsJsonEscaping {
+    static func escape(_ text: String) -> String {
+        var escaped = String()
+        escaped.reserveCapacity(text.count)
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\"": escaped += "\\\""
+            case "\\": escaped += "\\\\"
+            case "\u{0008}": escaped += "\\b"
+            case "\u{000C}": escaped += "\\f"
+            case "\n": escaped += "\\n"
+            case "\r": escaped += "\\r"
+            case "\t": escaped += "\\t"
+            default:
+                if scalar.value < 0x20 {
+                    escaped += String(format: "\\u%04x", scalar.value)
+                } else {
+                    escaped.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return escaped
+    }
+}
