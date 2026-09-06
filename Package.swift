@@ -36,6 +36,7 @@ let package = Package(
                 "KeychainCredentialStore.swift",
                 "WsDebugClient.swift",
                 "RustBindings/tvremote_core.swift",
+                "ZigCore/CoreLogic.swift",
             ],
             linkerSettings: [
                 .linkedLibrary("tvremote_core"),
