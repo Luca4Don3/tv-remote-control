@@ -53,6 +53,7 @@ class WsDebugClientLoopbackTest {
         private var serverCipher: DebugSessionCrypto.DirectionCipher? = null
         private var clientCipher: DebugSessionCrypto.DirectionCipher? = null
         private val replay = ReplayWindow(64)
+        private var lastCommandSequence = 0L
         private val workers = ThreadPoolExecutor(1, 1, 5L, TimeUnit.SECONDS, ArrayBlockingQueue(2)) {
             Thread(it, "tvrc-loopback-server").apply { isDaemon = true }
         }
@@ -115,6 +116,30 @@ class WsDebugClientLoopbackTest {
                 assertTrue("replay window must accept fresh counter", replay.checkAndAccept(counter))
                 val plaintext = clientCipher!!.open(frame.payload, counter)
                 val envelope = ProtocolCodec.decode(plaintext)
+                // agent 真实行为：client 的 ping 不回 ack（handleEncryptedMessage ack=null）
+                if (envelope.type == "ping") {
+                    receivedCommands.add("ping")
+                    continue
+                }
+                // agent 真实行为：命令序号严格递增（KeyStateTracker/TextCommandDispatcher）
+                if (envelope.sequence <= lastCommandSequence) {
+                    val rejected = ProtocolCodec.encode(
+                        ProtocolEnvelope(
+                            protocolVersion = ProtocolCodec.VERSION,
+                            requestId = envelope.requestId,
+                            sessionId = envelope.sessionId,
+                            sequence = envelope.sequence + 1,
+                            type = "command_ack",
+                            payload = dev.lucasdone.tvremote.agent.protocol.jsonObject(
+                                "commandSequence" to dev.lucasdone.tvremote.agent.protocol.jsonLong(envelope.sequence),
+                                "status" to dev.lucasdone.tvremote.agent.protocol.jsonString("REJECTED"),
+                            ),
+                        ),
+                    )
+                    WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_BINARY, serverCipher!!.seal(rejected))
+                    continue
+                }
+                lastCommandSequence = envelope.sequence
                 if (firstEnvelope == null) {
                     firstEnvelope = frame.payload
                 } else {
