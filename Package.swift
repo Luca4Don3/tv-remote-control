@@ -28,6 +28,7 @@ let package = Package(
         ),
         .target(
             name: "IOSController",
+            dependencies: ["TvremoteCoreFFI", "TvRemoteCoreZig"],
             path: "ios-controller/Sources",
             sources: [
                 "ControllerApp.swift",
@@ -35,7 +36,6 @@ let package = Package(
                 "WsDebugClient.swift",
                 "RustBindings/tvremote_core.swift",
             ],
-            dependencies: ["TvremoteCoreFFI", "TvRemoteCoreZig"],
             linkerSettings: [
                 .linkedLibrary("tvremote_core"),
                 .linkedLibrary("tv_remote_core"),
@@ -48,8 +48,8 @@ let package = Package(
         ),
         .testTarget(
             name: "IOSControllerTests",
-            path: "ios-controller/Tests/IOSControllerTests",
             dependencies: ["IOSController", "TvremoteCoreFFI", "TvRemoteCoreZig"],
+            path: "ios-controller/Tests/IOSControllerTests",
             linkerSettings: [
                 .linkedLibrary("tvremote_core"),
                 .linkedLibrary("tv_remote_core"),
