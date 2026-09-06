@@ -16,10 +16,11 @@ let package = Package(
         .library(name: "IOSController", targets: ["IOSController"]),
     ],
     targets: [
-        // Rust 核心 FFI 头（uniffi modulemap；实现静态库由 IOSController 的 linkerSettings 提供）
+        // Rust 核心 FFI 头（CI 从 core-rs/bindings/swift 拷贝为标准名 module.modulemap；
+        // 实现静态库由 IOSController 的 linkerSettings 提供）
         .systemLibrary(
             name: "TvremoteCoreFFI",
-            path: "core-rs/bindings/swift"
+            path: "ios-controller/VendorModules/Rust"
         ),
         // Zig 协议核心 C 头（CI 拷入 VendorModules；实现静态库由 IOSController 的 linkerSettings 提供）
         .systemLibrary(

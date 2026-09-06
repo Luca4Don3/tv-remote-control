@@ -191,11 +191,13 @@ jobs:
       - name: iOS XCTest run gate (SwiftPM on iOS Simulator)
         run: |
           set -o pipefail
-          # SwiftPM 构建前提：静态库 + Zig 头（modulemap 引同目录）+ Rust uniffi 绑定
-          mkdir -p ios-controller/VendorLib ios-controller/Sources/RustBindings
+          # SwiftPM 构建前提：静态库 + 头/modulemap（SwiftPM systemLibrary 要求标准名 module.modulemap）
+          mkdir -p ios-controller/VendorLib ios-controller/Sources/RustBindings ios-controller/VendorModules/Rust
           cp core-rs/target/aarch64-apple-ios-sim/release/libtvremote_core.a ios-controller/VendorLib/
           cp "${RUNNER_TEMP}/zig-ios-sim-core/lib/"lib*.a ios-controller/VendorLib/
           cp windows-controller/include/tv_remote_core.h windows-controller/include/tvrc_credential_store.h ios-controller/VendorModules/
+          cp core-rs/bindings/swift/tvremote_coreFFI.h ios-controller/VendorModules/Rust/
+          cp core-rs/bindings/swift/tvremote_coreFFI.modulemap ios-controller/VendorModules/Rust/module.modulemap
           cp core-rs/bindings/swift/tvremote_core.swift ios-controller/Sources/RustBindings/
           DEVICE="$(xcrun simctl list devices available | grep -m1 'iPhone' | sed -E 's/.*\(([A-F0-9-]+)\).*/\1/')"
           echo "Using simulator UDID: $DEVICE"
