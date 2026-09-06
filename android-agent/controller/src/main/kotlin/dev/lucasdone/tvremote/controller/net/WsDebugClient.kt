@@ -97,7 +97,13 @@ class WsDebugClient(
         return ack.status == "SUCCESS"
     }
 
-    private fun sendCommand(type: String, payload: JsonValue.ObjectValue): Ack {
+    /**
+     * 全函数互斥（writeLock 同时覆盖出向写与入向读循环）：
+     * 15s 心跳跑在调度线程，UI 在调用线程——二者并发时若读循环不加锁，
+     * 心跳可能吃掉命令的 ack（type=ping continue 后死等直至 45s 读超时断连）。
+     * 串行化代价：并发调用最多等待一次心跳往返（毫秒级）。
+     */
+    private fun sendCommand(type: String, payload: JsonValue.ObjectValue): Ack = synchronized(writeLock) {
         val message = ProtocolCodec.encode(
             ProtocolEnvelope(
                 protocolVersion = ProtocolCodec.VERSION,
@@ -108,11 +114,9 @@ class WsDebugClient(
                 payload = payload,
             ),
         )
-        val sealed = synchronized(writeLock) {
-            val cipher = clientCipher ?: throw IllegalStateException("not ready")
-            outboundSequence += 1
-            cipher.seal(message)
-        }
+        val cipher = clientCipher ?: throw IllegalStateException("not ready")
+        outboundSequence += 1
+        val sealed = cipher.seal(message)
         WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_BINARY, sealed)
         while (true) {
             val frame = WsFrameCodec.read(socket.inputStream, expectMasked = false) ?: throw IOException("connection closed")
@@ -134,6 +138,7 @@ class WsDebugClient(
                 reply.payload.requireString("status", 32),
             )
         }
+        error("unreachable: read loop exits only via return/throw")
     }
 
     /** HTTP 升级握手（Sec-WebSocket-Key = 随机 16B base64）。 */

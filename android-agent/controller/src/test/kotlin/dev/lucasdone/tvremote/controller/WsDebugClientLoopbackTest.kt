@@ -63,6 +63,7 @@ class WsDebugClientLoopbackTest {
                 try {
                     serve()
                 } catch (_: Exception) {
+                    // 正常退出路径：client 断开或读超时
                 }
             }
         }
@@ -265,4 +266,63 @@ class WsDebugClientLoopbackTest {
         }
     }
 
+
+    /** 并发命令（等价心跳与 UI 同时发的场景）：请求/响应必须严格不错配。 */
+    @Test
+    fun concurrentCommandsNeverCrossWire() {
+        val secret = newSecret()
+        val controllerId = newControllerId()
+        val server = LoopbackServer(secret)
+        server.start()
+        try {
+            val client = WsDebugClient("127.0.0.1", controllerId, secret, server.serverSocket.localPort)
+            try {
+                assertTrue(server.handshakeSeen.await(5, TimeUnit.SECONDS))
+                val threads = 4
+                val perThread = 6
+                val startGate = CountDownLatch(1)
+                val failures = java.util.concurrent.atomic.AtomicInteger(0)
+                val errors = java.util.Collections.synchronizedList(mutableListOf<String>())
+                val total = threads * perThread
+                val done = CountDownLatch(threads)
+                val workers = (0 until threads).map { t ->
+                    Thread {
+                        try {
+                            startGate.await()
+                            repeat(perThread) { i ->
+                                val key = if (t % 2 == 0) LogicalKey.DPAD_UP.name else LogicalKey.DPAD_DOWN.name
+                                try {
+                                    val ok = client.sendKeyEvent(key, if (i % 2 == 0) "DOWN" else "UP")
+                                    if (!ok) errors.add("ack-not-success t$t#$i")
+                                } catch (e: Exception) {
+                                    errors.add("t$t#$i => ${e::class.simpleName}: ${e.message}")
+                                    failures.incrementAndGet()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            failures.incrementAndGet()
+                            errors.add("worker$t => ${e::class.simpleName}: ${e.message}")
+                        } finally {
+                            done.countDown()
+                        }
+                    }.apply { isDaemon = true }
+                }
+                workers.forEach(Thread::start)
+                startGate.countDown()
+                assertTrue("all concurrent commands must finish well before the 45s read timeout", done.await(20, TimeUnit.SECONDS))
+                assertEquals("并发命令应全部成功：${errors.joinToString("; ")}", 0, failures.get())
+                // 回环服务端必须恰好收到 total 条 key_event（帧完好、无交错损坏）
+                val deadline = System.currentTimeMillis() + 5_000
+                while (server.receivedCommands.size < total && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(50)
+                }
+                assertEquals(total, server.receivedCommands.size)
+                assertTrue(server.receivedCommands.all { it == "key_event" })
+            } finally {
+                client.close()
+            }
+        } finally {
+            server.close()
+        }
+    }
 }
