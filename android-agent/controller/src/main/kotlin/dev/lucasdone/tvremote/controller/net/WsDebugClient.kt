@@ -17,7 +17,6 @@ import java.io.InputStreamReader
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.io.IOException
-import java.security.MessageDigest
 import java.security.SecureRandom
 
 /**
@@ -180,8 +179,5 @@ class WsDebugClient(
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val HEARTBEAT_INTERVAL_MS = 15_000L
         private const val READ_TIMEOUT_MS = 45_000
-
-        fun sha1Base64(data: ByteArray): String =
-            android.util.Base64.encodeToString(MessageDigest.getInstance("SHA-1").digest(data), android.util.Base64.NO_WRAP)
     }
 }

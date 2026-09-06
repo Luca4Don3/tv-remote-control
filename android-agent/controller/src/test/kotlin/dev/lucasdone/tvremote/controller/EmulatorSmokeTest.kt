@@ -205,6 +205,8 @@ class EmulatorSmokeTest {
 
     /** 测试即时开配对窗口并从电视 UI 抓取当前配对码（窗口 TTL 120s，随测试开启）。 */
     private fun openPairingWindow(): String {
+        val codeFile = java.io.File.createTempFile("tvrc-smoke-code", ".xml")
+        codeFile.deleteOnExit()
         adbShell(
             "am", "startservice", "-a", "dev.lucasdone.tvremote.agent.OPEN_PAIRING",
             "-n", "dev.lucasdone.tvremote.agent.debug/dev.lucasdone.tvremote.agent.service.AgentService",
@@ -212,10 +214,10 @@ class EmulatorSmokeTest {
         Thread.sleep(3000)
         repeat(10) {
             adbShell("uiautomator", "dump", "/data/local/tmp/code.xml")
-            val pulled = ProcessBuilder(adb + listOf("pull", "/data/local/tmp/code.xml", "/tmp/opencode/code.xml"))
+            val pulled = ProcessBuilder(adb + listOf("pull", "/data/local/tmp/code.xml", codeFile.absolutePath))
                 .redirectErrorStream(true).start().waitFor()
             if (pulled == 0) {
-                val xml = java.io.File("/tmp/opencode/code.xml").readText()
+                val xml = codeFile.readText()
                 val match = Regex("配对码[：:]&#?[0-9a-fA-F]*;?([0-9]{6})").find(xml)
                     ?: Regex("配对码[：:]([0-9]{6})").find(xml)
                 println("SMOKE dump#$it code => " + (match?.groupValues?.get(1) ?: "none"))
