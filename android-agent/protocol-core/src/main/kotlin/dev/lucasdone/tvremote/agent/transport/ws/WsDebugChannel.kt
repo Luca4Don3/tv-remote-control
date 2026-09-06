@@ -107,8 +107,8 @@ class WsDebugChannel(
             if (name == "sec-websocket-key") webSocketKey = value
         }
         val key = webSocketKey ?: throw ProtocolException("missing Sec-WebSocket-Key")
-        val accept = java.util.Base64.getEncoder()
-            .encodeToString(sha1("$key$WS_GUID".toByteArray(Charsets.US_ASCII)))
+        // RFC 6455：Sec-WebSocket-Accept 为标准 base64（带 padding）
+        val accept = Base64.encode(sha1("$key$WS_GUID".toByteArray(Charsets.US_ASCII)), withPadding = true)
         socket.outputStream.apply {
             write(
                 (
