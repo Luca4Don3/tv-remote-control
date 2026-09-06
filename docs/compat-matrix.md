@@ -52,18 +52,24 @@
 - **Rust core（:controller 使用）**：`.so` 以 API 21 平台头编译，仅供 minSdk 24 的
   手机控制端模块加载；agent 保持纯 Kotlin 实现不引入 .so，API 19 支持不受影响。
 
-## iOS（交叉编译与链接门禁状态）
+## iOS（交叉编译、链接与模拟器运行门禁状态）
 
 - 协议核心：Zig `aarch64-ios` 静态库（`TVRC_IOS_SDK_PATH` 指向 Xcode iPhoneOS SDK，
   见 README「iOS 本地构建」）；f128 软浮点符号由捆绑的 Zig compiler_rt 提供
   （Apple compiler-rt 无 fp128 实现）。
 - 链接门禁：CI 将 SwiftUI 壳 + Zig 核心（含 mbedTLS）+ Rust `aarch64-apple-ios`
   静态库实际链接为 iOS 设备可执行（`iOS full link gate` 步骤）——**类型检查与链接
-  均通过**；Swift 代码的运行时行为仍 `UNVERIFIED`（无真机/模拟器执行证据）。
+  均通过**。
+- **模拟器运行门禁**：`xcodebuild test`（SwiftPM × iOS 模拟器，`iOS XCTest run gate`
+  步骤）真跑 7 条冒烟——Zig 核心 ABI（tvrc_config/event init + tvrc_create 含 Keychain
+  回调）、Rust WsCodec 掩码帧结构、SessionCrypto seal/open roundtrip（counter=1 起 +
+  checkSequence 有状态防重放）、WS JSON 转义对齐——**全部通过**（Keychain blob 因
+  SwiftPM 测试 host 无 entitlement 跳过，待 Xcode 工程阶段）。
+- **仍 `UNVERIFIED`**：UI 交互、真实网络链路（TLS/配对/WS 到 agent）、真机运行。
 
 ## UNVERIFIED（真机待验证）
 
-- iOS 控制端（SwiftUI + Zig 核心 + Rust 绑定）全部运行时行为（连接/配对/遥控/WS）
+- iOS 控制端 UI 交互与真实网络链路（连接/配对/遥控/WS 到 agent）
 - API 19/21/23/26/29 真机上的 TLS 握手与配对全流程
 - API 19 上 `AES/GCM/NoPadding` 各厂商 provider 差异
 - API 21-22 上 `MediaProjection` 编码器重建行为
