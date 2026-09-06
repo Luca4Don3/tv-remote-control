@@ -1,4 +1,5 @@
 import Foundation
+import TvRemoteCoreZig
 
 /**
  * WS 调试通道客户端（对端：agent 明文 WS 端口 47833）。
