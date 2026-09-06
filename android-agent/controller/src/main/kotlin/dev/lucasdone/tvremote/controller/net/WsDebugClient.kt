@@ -115,8 +115,7 @@ class WsDebugClient(
         }
         WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_BINARY, sealed)
         while (true) {
-            val frame = WsFrameCodec.read(socket.inputStream, expectMasked = false) ?: run { println("SMOKE ws read => null EOF"); throw IOException("connection closed") }
-            println("SMOKE ws read => opcode=" + frame.opcode + " len=" + frame.payload.size)
+            val frame = WsFrameCodec.read(socket.inputStream, expectMasked = false) ?: throw IOException("connection closed")
             if (frame.opcode == WsFrameCodec.OPCODE_PING) {
                 // 客户端→服务端方向必须掩码（服务端硬校验）；writePong 是服务端出向帧
                 WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_PONG, frame.payload)
