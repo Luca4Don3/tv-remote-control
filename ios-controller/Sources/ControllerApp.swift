@@ -5,6 +5,7 @@
 
 import SwiftUI
 import Foundation
+import TvRemoteCoreZig
 
 private let coreOK = Int32(TVRC_OK.rawValue)
 private let coreBufferTooSmall = Int32(TVRC_BUFFER_TOO_SMALL.rawValue)

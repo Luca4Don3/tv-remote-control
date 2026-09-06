@@ -143,7 +143,7 @@ jobs:
           swiftc -swift-version 6 -typecheck \
             -target arm64-apple-ios16.0-simulator \
             -sdk "$(xcrun -sdk iphonesimulator --show-sdk-path)" \
-            -import-objc-header windows-controller/include/tv_remote_core.h \
+            -Xcc -fmodule-map-file=ios-controller/VendorModules/module.modulemap \
             -Xcc -fmodule-map-file=core-rs/bindings/swift/tvremote_coreFFI.modulemap \
             -I core-rs/bindings/swift \
             ios-controller/Sources/ControllerApp.swift \
@@ -174,7 +174,7 @@ jobs:
           swiftc -swift-version 6 -parse-as-library \
             -target arm64-apple-ios16.0 \
             -sdk "$(xcrun -sdk iphoneos --show-sdk-path)" \
-            -import-objc-header windows-controller/include/tv_remote_core.h \
+            -Xcc -fmodule-map-file=ios-controller/VendorModules/module.modulemap \
             -Xcc -fmodule-map-file=core-rs/bindings/swift/tvremote_coreFFI.modulemap \
             -I core-rs/bindings/swift \
             ios-controller/Sources/ControllerApp.swift \
@@ -195,7 +195,6 @@ jobs:
           mkdir -p ios-controller/VendorLib ios-controller/Sources/RustBindings ios-controller/Sources/ZigCore ios-controller/VendorModules/Rust
           cp core-rs/target/aarch64-apple-ios-sim/release/libtvremote_core.a ios-controller/VendorLib/
           cp "${RUNNER_TEMP}/zig-ios-sim-core/lib/"lib*.a ios-controller/VendorLib/
-          cp windows-controller/include/tv_remote_core.h windows-controller/include/tvrc_credential_store.h ios-controller/VendorModules/
           cp core-rs/bindings/swift/tvremote_coreFFI.h ios-controller/VendorModules/Rust/
           cp core-rs/bindings/swift/tvremote_coreFFI.modulemap ios-controller/VendorModules/Rust/module.modulemap
           cp core-rs/bindings/swift/tvremote_core.swift ios-controller/Sources/RustBindings/
@@ -225,7 +224,7 @@ jobs:
             macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift \
             macos-controller/Sources/*.swift \
             -L "${RUNNER_TEMP}/mac-core/lib" -ltv_remote_core \
-            -import-objc-header windows-controller/include/tv_remote_core.h \
+            -Xcc -fmodule-map-file=ios-controller/VendorModules/module.modulemap \
             -framework SwiftUI -framework AppKit -framework Security \
             -framework AVFoundation -framework CoreImage -framework CoreMedia \
             -framework MetalKit -framework VideoToolbox \
