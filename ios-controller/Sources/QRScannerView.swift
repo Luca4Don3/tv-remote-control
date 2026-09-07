@@ -67,20 +67,23 @@ struct QRScannerView: UIViewControllerRepresentable {
         }
     }
 
-    @MainActor
+    /// 元数据回调在 AVFoundation 队列（非主线程）——Coordinator 为 nonisolated，
+    /// 回调经 DispatchQueue.main 跳回主线程执行（@MainActor 闭包）。
     final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
-        private let onCode: (String) -> Void
-        private let onError: (String) -> Void
+        private let onCode: @MainActor (String) -> Void
+        private let onError: @MainActor (String) -> Void
         private var handled = false
 
-        init(onCode: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
+        init(onCode: @escaping @MainActor (String) -> Void, onError: @escaping @MainActor (String) -> Void) {
             self.onCode = onCode
             self.onError = onError
         }
 
-        func postError(_ message: String) { onError(message) }
+        func postError(_ message: String) {
+            DispatchQueue.main.async { self.onError(message) }
+        }
 
-        func metadataOutput(
+        nonisolated func metadataOutput(
             _ output: AVCaptureMetadataOutput,
             didOutput metadataObjects: [AVMetadataObject],
             from connection: AVCaptureConnection
@@ -90,7 +93,7 @@ struct QRScannerView: UIViewControllerRepresentable {
                   object.type == .qr, let value = object.stringValue
             else { return }
             handled = true
-            onCode(value)
+            DispatchQueue.main.async { self.onCode(value) }
         }
     }
 }
