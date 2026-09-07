@@ -27,8 +27,11 @@ class ControllerCredentialStore(context: Context) {
 
     @Synchronized
     fun save(tvAddress: String, credential: TvCredential) {
+        // IV 由 AndroidKeyStore 随机生成（调用方指定全零 IV 会造成 GCM nonce 重用，
+        // 且标准 provider 禁止调用方为 GCM 指定 IV）——init 后回读 cipher.iv 存储前置
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, masterKey(), GCMParameterSpec(128, ByteArray(12)))
+        cipher.init(Cipher.ENCRYPT_MODE, masterKey())
+        val iv = cipher.iv
         val json = dev.lucasdone.tvremote.agent.protocol.StrictJson.encode(
             dev.lucasdone.tvremote.agent.protocol.jsonObject(
                 "controllerId" to dev.lucasdone.tvremote.agent.protocol.jsonString(credential.controllerId),
@@ -41,7 +44,7 @@ class ControllerCredentialStore(context: Context) {
                 "displayName" to dev.lucasdone.tvremote.agent.protocol.jsonString(credential.displayName),
             ),
         )
-        val encrypted = cipher.iv + cipher.doFinal(json)
+        val encrypted = iv + cipher.doFinal(json)
         prefs.edit()
             .putString("tv.$tvAddress", android.util.Base64.encodeToString(encrypted, android.util.Base64.NO_WRAP))
             .putString("tv.$tvAddress.name", credential.displayName)

@@ -1,6 +1,7 @@
 package dev.lucasdone.tvremote.agent.service
 
 import android.annotation.SuppressLint
+import dev.lucasdone.tvremote.agent.BuildConfig
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -152,19 +153,24 @@ class AgentService : Service(), ControlServerCallbacks {
                 capabilities = { CapabilityDetector.detect(this).toProtocolJson() },
                 callbacks = this,
             )
-            wsDebug = WebSocketDebugServer(
-                credentialStore = credentialStore,
-                dispatcherFactory = {
-                    CommandDispatcher(
-                        KeyStateTracker(),
-                        listOf(AccessibilityCommandExecutor(), MediaCommandExecutor(this)),
-                    )
-                },
-                textDispatcherFactory = {
-                    TextCommandDispatcher(listOf(AccessibilityTextCommandExecutor()))
-                },
-            )
-            wsDebug?.start()
+            // 明文调试通道仅限 debug 构建（生产 APK 不含 47833 监听）：
+            // 与项目安全边界一致——正式控制链路仅 TLS；调试 WS 无运行时用户开关。
+            if (BuildConfig.DEBUG) {
+                wsDebug = WebSocketDebugServer(
+                    credentialStore = credentialStore,
+                    dispatcherFactory = {
+                        CommandDispatcher(
+                            KeyStateTracker(),
+                            listOf(AccessibilityCommandExecutor(), MediaCommandExecutor(this)),
+                        )
+                    },
+                    textDispatcherFactory = {
+                        TextCommandDispatcher(listOf(AccessibilityTextCommandExecutor()))
+                    },
+                )
+                wsDebug?.start()
+                Log.i(TAG, "WS debug channel enabled (debug build)")
+            }
             discovery = DiscoveryServer(displayName = getString(dev.lucasdone.tvremote.agent.R.string.app_name))
             control.start()
             discovery.start()
