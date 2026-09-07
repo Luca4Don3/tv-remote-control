@@ -149,7 +149,6 @@ jobs:
             ios-controller/Sources/*.swift \
             ios-controller/Sources/RustBindings/tvremote_core.swift \
             ios-controller/Sources/ZigCore/CoreLogic.swift \
-            core-rs/bindings/swift/tvremote_core.swift \
             macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift
       - name: Zig core cross-build for iOS device
         working-directory: windows-controller
@@ -180,7 +179,6 @@ jobs:
             ios-controller/Sources/*.swift \
             ios-controller/Sources/RustBindings/tvremote_core.swift \
             ios-controller/Sources/ZigCore/CoreLogic.swift \
-            core-rs/bindings/swift/tvremote_core.swift \
             macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift \
             -L "${RUNNER_TEMP}/zig-ios-core/lib" -ltv_remote_core -lmbedtls -lmbedx509 -lmbedcrypto \
             -L core-rs/target/aarch64-apple-ios/release -ltvremote_core \
