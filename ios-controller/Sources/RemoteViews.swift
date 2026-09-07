@@ -7,6 +7,8 @@ import TvRemoteCoreZig
 @MainActor
 struct ContentView: View {
     @StateObject private var model: ControllerModel
+    @State private var showScanner = false
+    @State private var scannerMessage: String?
     init(model: ControllerModel? = nil) {
         _model = model.map { StateObject(wrappedValue: $0) } ?? StateObject(wrappedValue: ControllerModel())
     }
@@ -32,12 +34,24 @@ struct ContentView: View {
                 Button("连接") { model.connect() }.disabled(model.busy || !model.controlAvailable)
                 Button("断开") { model.disconnect() }.disabled(model.busy || !model.controlAvailable)
             }
+            Button("扫码配对") { showScanner = true }
+                .disabled(model.busy || !model.controlAvailable)
             Text("安全核对码：\(model.sas)")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             RemoteKeypad(model: model)
         }
         .padding()
+        .sheet(isPresented: $showScanner) {
+            QRScannerSheet { invitation in
+                model.target = invitation.host
+                scannerMessage = "已识别电视 \(invitation.host)，请输入电视上显示的 6 位配对码"
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .qrScannerError)) { note in
+                scannerMessage = note.userInfo?["message"] as? String
+            }
+        }
+        scannerMessage.map { Text($0).font(.caption).foregroundStyle(.secondary) }
     }
 }
 
