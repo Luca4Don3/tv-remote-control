@@ -145,6 +145,35 @@ jobs:
           cp macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift ios-controller/Sources/ZigCore/
           cp core-rs/bindings/swift/tvremote_coreFFI.h ios-controller/VendorModules/Rust/
           cp core-rs/bindings/swift/tvremote_coreFFI.modulemap ios-controller/VendorModules/Rust/module.modulemap
+      - name: Generate Xcode project (xcodegen) and build App + App Clip targets
+        run: |
+          set -o pipefail
+          brew install xcodegen
+          # App Clip/主 App 构建需要 Zig sim 静态库——先执行交叉构建（复用 XCTest 步骤产物路径）
+          cd windows-controller
+          export TVRC_IOS_SDK_PATH="$(xcrun -sdk iphonesimulator --show-sdk-path)"
+          zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-ios-simulator --prefix "${RUNNER_TEMP}/zig-ios-sim-core"
+          cd ..
+          mkdir -p ios-controller/VendorLib
+          cp "${RUNNER_TEMP}/zig-ios-sim-core/lib/"lib*.a ios-controller/VendorLib/
+          cd ios-controller
+          xcodegen generate
+          # xcodegen 2.46 生成 objectVersion 77（Xcode 16 项目格式）——runner 的 Xcode 15.4 打不开，
+          # 切到可用的 Xcode 16+（macos-14 image 预装多个版本）
+          XCODE16="$(ls -d /Applications/Xcode_1[6-9]*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$XCODE16" ]; then
+            echo "Using $XCODE16"
+            export DEVELOPER_DIR="$XCODE16/Contents/Developer"
+          fi
+          xcodebuild -version
+          xcodebuild build \
+            -project TVRemoteController.xcodeproj \
+            -scheme TVRemoteApp \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "${RUNNER_TEMP}/ios-appclip-derived" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tail -40
       - name: iOS controller typecheck (SwiftUI shell + Rust FFI + Zig core header)
         run: |
           swiftc -swift-version 6 -typecheck \
