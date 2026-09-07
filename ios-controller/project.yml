@@ -2,6 +2,8 @@ name: TVRemoteController
 options:
   bundleIdPrefix: dev.tvrc
   createIntermediateGroups: true
+  # CI runner 的 Xcode 15.4 可打开（xcodegen 新版默认 objectVersion 需 Xcode 16）
+  xcodeVersion: "15.0"
   deploymentTarget:
     iOS: "16.0"
 settings:

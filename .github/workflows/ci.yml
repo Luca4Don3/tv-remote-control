@@ -147,6 +147,7 @@ jobs:
           cp core-rs/bindings/swift/tvremote_coreFFI.modulemap ios-controller/VendorModules/Rust/module.modulemap
       - name: Generate Xcode project (xcodegen) and build App + App Clip targets
         run: |
+          set -o pipefail
           brew install xcodegen
           # App Clip/主 App 构建需要 Zig sim 静态库——先执行交叉构建（复用 XCTest 步骤产物路径）
           cd windows-controller
