@@ -6,7 +6,10 @@ import TvRemoteCoreZig
 
 @MainActor
 struct ContentView: View {
-    @StateObject private var model = ControllerModel()
+    @StateObject private var model: ControllerModel
+    init(model: ControllerModel? = nil) {
+        _model = model.map { StateObject(wrappedValue: $0) } ?? StateObject(wrappedValue: ControllerModel())
+    }
 
     var body: some View {
         VStack(spacing: 12) {
