@@ -173,7 +173,8 @@ jobs:
             -derivedDataPath "${RUNNER_TEMP}/ios-appclip-derived" \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
-            2>&1 | tail -40
+            2>&1 | tee "${RUNNER_TEMP}/appclip-build.log" | tail -5
+          grep -E "error:|BUILD FAILED" "${RUNNER_TEMP}/appclip-build.log" | head -30 || true
       - name: iOS controller typecheck (SwiftUI shell + Rust FFI + Zig core header)
         run: |
           swiftc -swift-version 6 -typecheck \
