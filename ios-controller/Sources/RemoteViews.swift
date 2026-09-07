@@ -2,6 +2,7 @@
 // TV Remote Control —— 遥控视图（主 App 与 App Clip 共享）。
 
 import SwiftUI
+import TvRemoteCoreZig
 
 @MainActor
 struct ContentView: View {
