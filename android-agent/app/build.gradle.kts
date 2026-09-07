@@ -17,6 +17,7 @@ val releaseKeyPassword = providers.gradleProperty("tvrc.release.keyPassword").or
 val hasReleaseSigning = listOf(releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }
 
 android {
+    buildFeatures { buildConfig = true }
     namespace = "dev.lucasdone.tvremote.agent"
     compileSdk = 36
 
