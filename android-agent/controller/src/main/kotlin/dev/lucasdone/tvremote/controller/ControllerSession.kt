@@ -31,6 +31,9 @@ class ControllerSession(
     random: SecureRandom = SecureRandom(),
 ) {
     private val random: SecureRandom = random
+    private val keepalive = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "tvrc-keepalive").apply { isDaemon = true }
+    }
     private var sessionId: String = ""
     private var connection: dev.lucasdone.tvremote.controller.net.ConnectionTransport? = null
     private var connectionUsedForPairing = false
@@ -177,6 +180,8 @@ class ControllerSession(
         val complete = receiveExpect("auth_complete") ?: throw AuthFailedException("no auth complete")
         sessionId = complete.payload.requireString("sessionId", 128)
         return parseCapabilities(complete.payload.requireObject("capabilities"))
+
+        startKeepalive()
     }
 
     fun sendKeyEvent(key: String, state: String, repeatCount: Int = 0): AckResult {
@@ -220,11 +225,25 @@ class ControllerSession(
             val message = activeConnection().receive() ?: return null
             if (message.type in types) return message
             if (message.type == "error") return message
+            // 服务端保活 ping：排队被读循环消费时在此即时应答（agent 45s 无接收即失联断连）
+            if (message.type == "ping") {
+                activeConnection().send(
+                    requestId = message.requestId,
+                    sessionId = message.sessionId,
+                    type = "pong",
+                    payload = dev.lucasdone.tvremote.agent.protocol.jsonObject(),
+                )
+                continue
+            }
             // 其他服务端推送（media_state 等）忽略
         }
     }
 
     private fun randomBytes(size: Int): ByteArray = ByteArray(size).also(random::nextBytes)
+
+        companion object {
+        private const val KEEPALIVE_INTERVAL_MS = 15_000L
+    }
 
     internal fun parseCapabilitiesPublic(payload: JsonValue.ObjectValue): Capabilities = parseCapabilities(payload)
 
@@ -250,8 +269,30 @@ class ControllerSession(
         val isSuccess: Boolean get() = status == "SUCCESS"
     }
 
+    /**
+     * TLS 主链路保活：15s fire-and-forget ping（agent 对 client ping 回 pong，
+     * pong 由命令读循环的"其他推送忽略"消化；agent 收到即刷新失联计时，
+     * 否则空闲 45s 必被服务端断连）。
+     */
+    private fun startKeepalive() {
+        keepalive.scheduleWithFixedDelay({
+            try {
+                val connection = connection ?: return@scheduleWithFixedDelay
+                connection.send(
+                    requestId = connection.nextRequestId(),
+                    sessionId = sessionId,
+                    type = "ping",
+                    payload = dev.lucasdone.tvremote.agent.protocol.jsonObject(),
+                )
+            } catch (_: Exception) {
+                // 保活失败交给下一次命令的连接错误路径处理
+            }
+        }, KEEPALIVE_INTERVAL_MS, KEEPALIVE_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
     /** 关闭当前连接（认证后的控制连接；配对连接已被 authenticate 替换关闭）。 */
     fun close() {
+        keepalive.shutdownNow()
         connection?.close()
         connection = null
     }
