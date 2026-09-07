@@ -1,0 +1,11 @@
+{
+  "pages": ["pages/pair/pair", "pages/remote/remote"],
+  "window": {
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#101418",
+    "navigationBarTitleText": "TV 遥控（调试）",
+    "navigationBarTextStyle": "white"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

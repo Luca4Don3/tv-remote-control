@@ -13,3 +13,5 @@ export * from "./frame.js";
 export * from "./crypto.js";
 export * from "./envelope.js";
 export * from "./replay.js";
+export * from "./session.js";
+export * from "./random.js";

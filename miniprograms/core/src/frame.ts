@@ -7,6 +7,8 @@
  * - 流式：喂入任意分段字节，产出完整消息（与 Rust WsDecoder/Kotlin readFully 缓冲语义一致）
  */
 
+import { randomBytes } from "./random.js";
+
 export const OPCODE_CONTINUATION = 0x0;
 export const OPCODE_TEXT = 0x1;
 export const OPCODE_BINARY = 0x2;
@@ -24,7 +26,7 @@ export interface IncomingFrame {
 
 function randomMaskKey(): Uint8Array {
   const key = new Uint8Array(4);
-  crypto.getRandomValues(key);
+  key.set(randomBytes(4));
   return key;
 }
 

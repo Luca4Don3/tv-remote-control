@@ -1,0 +1,16 @@
+{
+  "name": "@tvrc/miniprogram-wechat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TV 遥控微信小程序（开发调试版）：WS 调试通道客户端",
+  "dependencies": {
+    "@tvrc/miniprogram-core": "file:../core"
+  },
+  "devDependencies": {
+    "miniprogram-api-typings": "^4.0.0",
+    "typescript": "^5.9.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
