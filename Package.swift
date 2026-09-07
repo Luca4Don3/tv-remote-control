@@ -37,6 +37,7 @@ let package = Package(
                 "CoreHandle.swift",
                 "RemoteViews.swift",
                 "AppClipInvitation.swift",
+                "QRScannerView.swift",
                 "KeychainCredentialStore.swift",
                 "WsDebugClient.swift",
                 "RustBindings/tvremote_core.swift",
