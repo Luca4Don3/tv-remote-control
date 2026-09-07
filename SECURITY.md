@@ -12,9 +12,14 @@ Include the affected version, platform, reproducible steps, impact, and the smal
 
 The project will acknowledge a report when it has been reviewed and will coordinate remediation and disclosure through the private advisory. There is currently no bug-bounty program.
 
-## WebSocket 调试通道（明文，仅限开发调试）
+## WebSocket 调试通道（明文，仅限开发调试，仅 debug 构建）
 
-端口 47833 的 WebSocket 通道是**明文**传输（不使用 TLS），其安全完全依赖应用层端到端加密：
+端口 47833 的 WebSocket 通道是**明文**传输（不使用 TLS），其安全完全依赖应用层端到端加密。
+**该通道仅在 debug 构建启用**（`BuildConfig.DEBUG` 门禁）——生产 APK 不包含该监听端口：
+正式遥控链路为 TCP+TLS 47832，WS 不承载任何正式流量：
+
+- 密钥仅从**已配对**控制端凭据派生（HKDF-SHA256，salt = 双方随机数），未配对设备无法派生有效密钥；
+  凭据查询在每次握手时进行——控制端被撤销后新连接立即拒绝；
 
 - 密钥仅从**已配对**控制端凭据派生（HKDF-SHA256，salt = 双方随机数），未配对设备无法派生有效密钥；
 - 每条消息 AES-256-GCM 加密，AAD 绑定 8 字节序号计数器；`ReplayWindow` 拒绝重复与过旧序号；

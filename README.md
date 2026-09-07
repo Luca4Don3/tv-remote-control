@@ -6,8 +6,13 @@ Android TV 应用开发测试辅助工具：电视端 APK 提供安全的按键�
 
 ## 架构与安全边界
 
-- APK 是默认且唯一的按键控制后端；控制协议使用长度前缀 TCP + TLS，不使用 WebSocket。
-- 首次配对使用电视端 6 位码、双端 SAS 核对和电视本地确认；长期凭据按电视证书指纹存储在 Android Keystore、Windows DPAPI 或 macOS Keychain。
+- APK 是默认且唯一的按键控制后端；**正式控制链路仅 TLS**（长度前缀 TCP + TLS 47832）。
+  另有明文 WebSocket 调试通道（47833，应用层端到端加密）**仅在 debug 构建启用**——生产 APK
+  不包含该监听；仅供开发调试（小程序开发版等），正式遥控不经过 WS。
+- 首次配对使用电视端 6 位码、双端 SAS 核对和电视本地确认；**所有控制端（Android/iOS/
+  Windows/macOS）独立计算 SAS 并常量时间比对**（扫码路径 SAS 输入为一次性 token——
+  扫码端只持有 token）；长期凭据按电视证书指纹存储在 Android Keystore、Windows DPAPI 或
+  macOS Keychain（手机端凭据持久化使用 KeyStore 随机 IV 的 AES-GCM 加密）。
 - 活动会话由有效认证消息滑动续期，45 秒心跳失联；未知、乱序和重放消息显式失败。
 - MediaProjection 通过独立的证书 pin TLS 会话传输 H.264/AAC TVRM 包，每次观看都需要电视端授权；不绕过 DRM、HDCP 或应用音频捕获策略。
 - MediaProjection 从 `1280×720/15 FPS/2 Mbps` 启动；连续 30 个普通视频包被拒或 API 29+ 达到 severe thermal 时，每次投影最多单向降至 `960×540/10 FPS/1 Mbps`。重建失败会终止媒体附件并显式上报。
