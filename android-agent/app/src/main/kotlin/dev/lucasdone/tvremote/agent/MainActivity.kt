@@ -207,6 +207,8 @@ class MainActivity : Activity() {
             qrView.setImageDrawable(null)
             return
         }
+        // token TTL 60s < 配对窗口 120s：到期即时隐藏（否则后 60s 展示的二维码扫码必败）
+        qrView.postDelayed({ renderQr(pairing) }, pairing.qrTokenExpiresAtMs - nowMs)
         val host = primaryLanAddress()?.hostAddress
         if (host == null) {
             qrView.setImageDrawable(null)

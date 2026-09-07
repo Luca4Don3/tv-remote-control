@@ -7,7 +7,6 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.os.Bundle
 import dev.lucasdone.tvremote.agent.model.LogicalKey
-import dev.lucasdone.tvremote.agent.model.TextAction
 import dev.lucasdone.tvremote.agent.model.TextCommand
 
 class TvAccessibilityService : AccessibilityService() {
@@ -101,8 +100,9 @@ class TvAccessibilityService : AccessibilityService() {
             val arguments = Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, command.text)
             }
-            return editable.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) &&
-                command.action == TextAction.COMMIT
+            // DRAFT 也真实执行了 ACTION_SET_TEXT：EXECUTED 却返回 false 会造成
+            // "文本已改但 ACK 为失败"的错觉——按实际执行结果返回
+            return editable.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
         } finally {
             recycle(*chain.distinctBy(System::identityHashCode).toTypedArray())
         }

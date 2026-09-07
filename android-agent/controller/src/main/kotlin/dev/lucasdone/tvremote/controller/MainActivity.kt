@@ -80,9 +80,11 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         wsClient?.close()
         wsClient = null
+        // 先关 ControllerSession（含其内部活动连接与保活线程），再清 MainActivity 的直连引用
+        session?.close()
+        session = null
         connection?.close()
         connection = null
-        session = null
         io.shutdownNow()
         super.onDestroy()
     }
@@ -365,6 +367,9 @@ private fun RemoteScreen(
     state: MainActivity.UiState.Connected,
     callbacks: MainActivity.Callbacks,
 ) {
+    // 能力位：UNSUPPORTED 键禁用（对齐 agent 能力协商），避免"点了没反应"的静默失败
+    fun supported(key: String): Boolean =
+        state.capabilities.keySupport[key] == "SUPPORTED"
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -372,24 +377,27 @@ private fun RemoteScreen(
         Text("已连接 ${state.host}", fontSize = 16.sp, fontWeight = FontWeight.Bold)
         state.statusMessage?.let { Text(it, fontSize = 12.sp) }
         Spacer(Modifier.height(12.dp))
-        DpadGrid(callbacks)
+        DpadGrid(callbacks, ::supported)
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            KeyButton("返回") { callbacks.sendKey("BACK", "PRESS") }
-            KeyButton("主页") { callbacks.sendKey("HOME", "PRESS") }
+            KeyButton("返回", supported("BACK")) { callbacks.sendKey("BACK", "PRESS") }
+            KeyButton("主页", supported("HOME")) { callbacks.sendKey("HOME", "PRESS") }
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            KeyButton("音量+") { callbacks.sendKey("VOLUME_UP", "PRESS") }
-            KeyButton("静音") { callbacks.sendKey("VOLUME_MUTE", "PRESS") }
-            KeyButton("音量-") { callbacks.sendKey("VOLUME_DOWN", "PRESS") }
+            KeyButton("音量+", supported("VOLUME_UP")) { callbacks.sendKey("VOLUME_UP", "PRESS") }
+            KeyButton("静音", supported("VOLUME_MUTE")) { callbacks.sendKey("VOLUME_MUTE", "PRESS") }
+            KeyButton("音量-", supported("VOLUME_DOWN")) { callbacks.sendKey("VOLUME_DOWN", "PRESS") }
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            KeyButton("播放/暂停") { callbacks.sendKey("MEDIA_PLAY_PAUSE", "PRESS") }
-            KeyButton("停止") { callbacks.sendKey("MEDIA_STOP", "PRESS") }
+            KeyButton("播放/暂停", supported("MEDIA_PLAY_PAUSE")) { callbacks.sendKey("MEDIA_PLAY_PAUSE", "PRESS") }
+            KeyButton("停止", supported("MEDIA_STOP")) { callbacks.sendKey("MEDIA_STOP", "PRESS") }
         }
         Spacer(Modifier.height(8.dp))
+        if (state.capabilities.textInput == "SUPPORTED") {
+            TextInputRow(callbacks)
+        }
         OutlinedButton(onClick = { callbacks.switchToDebugChannel(state.host) }) {
             Text("启用调试通道（WS）")
         }
@@ -399,19 +407,52 @@ private fun RemoteScreen(
 }
 
 @Composable
-private fun DpadGrid(callbacks: MainActivity.Callbacks) {
+private fun DpadGrid(callbacks: MainActivity.Callbacks, supported: (String) -> Boolean) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        KeyButton("▲") { callbacks.sendKey("DPAD_UP", "PRESS") }
+        KeyButton("▲", supported("DPAD_UP")) { callbacks.sendKey("DPAD_UP", "PRESS") }
         Row {
-            KeyButton("◀") { callbacks.sendKey("DPAD_LEFT", "PRESS") }
-            KeyButton("OK") { callbacks.sendKey("DPAD_CENTER", "PRESS") }
-            KeyButton("▶") { callbacks.sendKey("DPAD_RIGHT", "PRESS") }
+            KeyButton("◀", supported("DPAD_LEFT")) { callbacks.sendKey("DPAD_LEFT", "PRESS") }
+            KeyButton("OK", supported("DPAD_CENTER")) { callbacks.sendKey("DPAD_CENTER", "PRESS") }
+            KeyButton("▶", supported("DPAD_RIGHT")) { callbacks.sendKey("DPAD_RIGHT", "PRESS") }
         }
-        KeyButton("▼") { callbacks.sendKey("DPAD_DOWN", "PRESS") }
+        KeyButton("▼", supported("DPAD_DOWN")) { callbacks.sendKey("DPAD_DOWN", "PRESS") }
+    }
+}
+
+/** 文本注入入口（textInput=SUPPORTED 时显示）。 */
+@Composable
+private fun TextInputRow(callbacks: MainActivity.Callbacks) {
+    var text by remember { mutableStateOf("") }
+    var sentStatus by remember { mutableStateOf<String?>(null) }
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            label = { Text("输入注入文本") },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    callbacks.sendText(text, draft = true)
+                    sentStatus = "draft 已发送"
+                },
+                enabled = text.isNotBlank(),
+            ) { Text("预览") }
+            Button(
+                onClick = {
+                    callbacks.sendText(text, draft = false)
+                    sentStatus = "commit 已发送"
+                },
+                enabled = text.isNotBlank(),
+            ) { Text("提交") }
+        }
+        sentStatus?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary) }
     }
 }
 
 @Composable
-private fun KeyButton(label: String, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, modifier = Modifier.padding(4.dp)) { Text(label) }
+private fun KeyButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick, enabled = enabled, modifier = Modifier.padding(4.dp)) { Text(label) }
 }
