@@ -1,5 +1,10 @@
 // swift-version 6; iOS 16+
 // TV Remote Control —— 配对/连接/遥控状态机（Zig 核心事件驱动；主 App 与 App Clip 共享）。
+
+import SwiftUI
+import Foundation
+import TvRemoteCoreZig
+
 struct PressState {
     let downRequestID: UInt64
     let repeatTask: Task<Void, Never>
