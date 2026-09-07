@@ -21,6 +21,8 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import dev.lucasdone.tvremote.agent.auth.DebugCredentialExporter
+import dev.lucasdone.tvremote.agent.auth.KeystoreCredentialStore
 import dev.lucasdone.tvremote.agent.device.CapabilityDetector
 import dev.lucasdone.tvremote.agent.transport.DiscoveryServer
 import java.net.InetAddress
@@ -129,6 +131,12 @@ class MainActivity : Activity() {
             text = "刷新能力报告"
             setOnClickListener { refreshReport() }
         }, matchWidth())
+        if (BuildConfig.DEBUG) {
+            content.addView(Button(this).apply {
+                text = "查看调试凭据（仅开发环境）"
+                setOnClickListener { showDebugCredentials() }
+            }, matchWidth())
+        }
         content.addView(reportView, matchWidth())
 
         return ScrollView(this).apply { addView(content) }
@@ -248,6 +256,27 @@ class MainActivity : Activity() {
 
     private fun refreshReport() {
         reportView.text = CapabilityDetector.detect(this).toJson()
+    }
+
+    /**
+     * 调试凭据导出（BuildConfig.DEBUG gate）：展示已配对控制端的 controllerId/PSK，
+     * 供小程序等调试客户端手动录入。PSK 等价完整控制权，仅限开发者自有设备。
+     */
+    private fun showDebugCredentials() {
+        val store = KeystoreCredentialStore(applicationContext)
+        val text = DebugCredentialExporter.format(DebugCredentialExporter.export(store))
+        val copyText = DebugCredentialExporter.export(store).joinToString("\n\n") {
+            "controllerId=${it.controllerId}\nPSK=${it.pskHex}"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("调试凭据（开发环境）")
+            .setMessage(text + "\n\n仅用于自有设备的开发调试，请勿外传。")
+            .setPositiveButton("复制") { _, _ ->
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("tvrc-debug-credential", copyText))
+            }
+            .setNegativeButton("关闭", null)
+            .show()
     }
 
     private fun showMediaConfirmation(attachmentId: Long) {
