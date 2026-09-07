@@ -69,7 +69,7 @@ struct QRScannerView: UIViewControllerRepresentable {
 
     /// 元数据回调在 AVFoundation 队列（非主线程）——Coordinator 为 nonisolated，
     /// 回调经 DispatchQueue.main 跳回主线程执行（@MainActor 闭包）。
-    final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
+    final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate, @unchecked Sendable {
         private let onCode: @MainActor (String) -> Void
         private let onError: @MainActor (String) -> Void
         private var handled = false
