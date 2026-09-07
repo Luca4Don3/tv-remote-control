@@ -138,6 +138,13 @@ jobs:
             -target arm64-apple-ios16.0 \
             -sdk "$(xcrun -sdk iphoneos --show-sdk-path)" \
             macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift
+      - name: Prepare iOS SwiftPM vendored sources (typecheck/link/xctest prerequisites)
+        run: |
+          mkdir -p ios-controller/Sources/RustBindings ios-controller/Sources/ZigCore ios-controller/VendorModules/Rust
+          cp core-rs/bindings/swift/tvremote_core.swift ios-controller/Sources/RustBindings/
+          cp macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift ios-controller/Sources/ZigCore/
+          cp core-rs/bindings/swift/tvremote_coreFFI.h ios-controller/VendorModules/Rust/
+          cp core-rs/bindings/swift/tvremote_coreFFI.modulemap ios-controller/VendorModules/Rust/module.modulemap
       - name: iOS controller typecheck (SwiftUI shell + Rust FFI + Zig core header)
         run: |
           swiftc -swift-version 6 -typecheck \
@@ -146,11 +153,9 @@ jobs:
             -Xcc -fmodule-map-file=ios-controller/VendorModules/module.modulemap \
             -Xcc -fmodule-map-file=core-rs/bindings/swift/tvremote_coreFFI.modulemap \
             -I core-rs/bindings/swift \
-            ios-controller/Sources/ControllerApp.swift \
-            ios-controller/Sources/KeychainCredentialStore.swift \
-            ios-controller/Sources/WsDebugClient.swift \
-            core-rs/bindings/swift/tvremote_core.swift \
-            macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift
+            ios-controller/Sources/*.swift \
+            ios-controller/Sources/RustBindings/tvremote_core.swift \
+            ios-controller/Sources/ZigCore/CoreLogic.swift
       - name: Zig core cross-build for iOS device
         working-directory: windows-controller
         env:
@@ -177,11 +182,9 @@ jobs:
             -Xcc -fmodule-map-file=ios-controller/VendorModules/module.modulemap \
             -Xcc -fmodule-map-file=core-rs/bindings/swift/tvremote_coreFFI.modulemap \
             -I core-rs/bindings/swift \
-            ios-controller/Sources/ControllerApp.swift \
-            ios-controller/Sources/KeychainCredentialStore.swift \
-            ios-controller/Sources/WsDebugClient.swift \
-            core-rs/bindings/swift/tvremote_core.swift \
-            macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift \
+            ios-controller/Sources/*.swift \
+            ios-controller/Sources/RustBindings/tvremote_core.swift \
+            ios-controller/Sources/ZigCore/CoreLogic.swift \
             -L "${RUNNER_TEMP}/zig-ios-core/lib" -ltv_remote_core -lmbedtls -lmbedx509 -lmbedcrypto \
             -L core-rs/target/aarch64-apple-ios/release -ltvremote_core \
             -L "$(dirname "$CLANG_RT_A")" "-l${CLANG_RT_LIB}" \

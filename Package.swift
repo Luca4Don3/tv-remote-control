@@ -33,6 +33,10 @@ let package = Package(
             path: "ios-controller/Sources",
             sources: [
                 "ControllerApp.swift",
+                "ControllerModel.swift",
+                "CoreHandle.swift",
+                "RemoteViews.swift",
+                "AppClipInvitation.swift",
                 "KeychainCredentialStore.swift",
                 "WsDebugClient.swift",
                 "RustBindings/tvremote_core.swift",
