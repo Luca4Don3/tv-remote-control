@@ -1,6 +1,7 @@
 package dev.lucasdone.tvremote.controller
 
 import dev.lucasdone.tvremote.agent.auth.AuthTranscript
+import dev.lucasdone.tvremote.agent.auth.PairingTranscript
 import dev.lucasdone.tvremote.agent.protocol.Hex
 import dev.lucasdone.tvremote.agent.protocol.JsonValue
 import dev.lucasdone.tvremote.agent.protocol.ProtocolCodec
@@ -11,6 +12,7 @@ import dev.lucasdone.tvremote.agent.protocol.jsonObject
 import dev.lucasdone.tvremote.agent.protocol.jsonString
 import dev.lucasdone.tvremote.controller.net.ConnectionTransport
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -63,13 +65,12 @@ class ControllerSessionTest {
         payload = payload,
     )
 
+    /** 中间人语义：服务端 SAS 与本地计算不符必须拒绝（仅展示不验证的历史缺陷回归锚）。 */
     @Test
-    fun pairingFullFlow() {
+    fun pairingRejectsTamperedSas() {
         val script = ArrayDeque<ProtocolEnvelope>()
         val transport = ScriptedTransport(fingerprint, script)
-        val session = ControllerSession { transport }
-
-        // 阶段一：pair_request → pairing_sas
+        val session = ControllerSession(connectionFactory = { transport })
         script += envelope(
             "pairing_sas",
             jsonObject(
@@ -80,8 +81,49 @@ class ControllerSessionTest {
             ),
             requestId = "c-1",
         )
-        val sas = session.pairWithCode("654321", "Test")
-        assertEquals("123456", sas)
+        try {
+            session.pairWithCode("654321", "Test")
+            fail("mismatched SAS must be rejected")
+        } catch (_: ControllerSession.PairingRejectedException) {
+        }
+    }
+
+    @Test
+    fun pairingFullFlow() {
+        val script = ArrayDeque<ProtocolEnvelope>()
+        val transport = ScriptedTransport(fingerprint, script)
+
+        // 阶段一：pair_request → pairing_sas（服务端 SAS 与客户端本地计算一致）
+        // 客户端 nonce 由确定性 random 生成（注入），服务端 SAS 预先按同一 transcript 计算
+        val code = "654321"
+        val tvNonce = "ab".repeat(32)
+        val controllerNonce = ByteArray(32) { (it + 7).toByte() }
+        val serverSas = PairingTranscript.computeSas(
+            code = code,
+            protocolVersion = 1,
+            certificateFingerprint = fingerprint,
+            tvNonce = Hex.decode(tvNonce),
+            controllerNonce = controllerNonce,
+            controllerName = "Test",
+        )
+        script += envelope(
+            "pairing_sas",
+            jsonObject(
+                "pairingId" to jsonString("a1b2c3d4e5f60718"),
+                "sas" to jsonString(serverSas),
+                "tvNonce" to jsonString(tvNonce),
+                "expiresInMs" to jsonLong(120_000),
+            ),
+            requestId = "c-1",
+        )
+        val deterministic = object : java.security.SecureRandom() {
+            override fun nextBytes(bytes: ByteArray) {
+                bytes.indices.forEach { bytes[it] = (it + 7).toByte() }
+            }
+        }
+        val session = ControllerSession({ transport }, deterministic)
+        val sas = session.pairWithCode(code, "Test")
+        assertEquals(serverSas, sas)
         assertEquals("pair_request", transport.sent.first().first)
 
         // 阶段二：pair_credential → store_ack → pair_complete
@@ -116,7 +158,7 @@ class ControllerSessionTest {
     fun authenticationResponseMatchesTranscript() {
         val script = ArrayDeque<ProtocolEnvelope>()
         val transport = ScriptedTransport(fingerprint, script)
-        val session = ControllerSession { transport }
+        val session = ControllerSession(connectionFactory = { transport })
         val controllerId = "ab".repeat(16)
         val secret = ByteArray(32) { (it + 3).toByte() }
         val challengeId = "challenge-x"
@@ -163,7 +205,7 @@ class ControllerSessionTest {
     fun pairingRejectionSurfaces() {
         val script = ArrayDeque<ProtocolEnvelope>()
         val transport = ScriptedTransport(fingerprint, script)
-        val session = ControllerSession { transport }
+        val session = ControllerSession(connectionFactory = { transport })
         script += envelope(
             "pair_rejected",
             jsonObject("reason" to jsonString("pairing rejected")),

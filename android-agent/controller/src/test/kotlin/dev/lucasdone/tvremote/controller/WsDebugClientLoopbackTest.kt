@@ -95,7 +95,6 @@ class WsDebugClientLoopbackTest {
                 var lastCommandSequence = 0L
                 object : WsDebugCommandHandler {
                     override fun keyEvent(sequence: Long, key: LogicalKey, state: KeyState, repeatCount: Int): CommandAck {
-                        println("COREDIAG handler keyEvent seq=$sequence key=$key state=$state")
                         receivedCommands.add("key_event")
                         return if (sequence <= lastCommandSequence) {
                             // agent 真实行为：命令序号严格递增（KeyStateTracker）
