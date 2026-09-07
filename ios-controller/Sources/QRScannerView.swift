@@ -8,7 +8,7 @@ import SwiftUI
 
 /// 相机扫码视图；识别到二维码后回调原文并自动结束。
 struct QRScannerView: UIViewControllerRepresentable {
-    let onCode: (String) -> Void
+    let onCode: @MainActor (String) -> Void
     @Environment(\.dismiss) private var dismiss
 
     func makeUIViewController(context: Context) -> UIViewController {
