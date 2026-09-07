@@ -36,3 +36,6 @@ windows-controller/zig-pkg/
 # iOS XCTest 门禁的 CI 产物（构建期填充）
 /ios-controller/VendorLib/
 /ios-controller/Sources/RustBindings/
+
+# 小程序依赖与产物（npm 锁文件保留，node_modules 不入库）
+node_modules/

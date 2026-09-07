@@ -1,0 +1,20 @@
+{
+  "name": "@tvrc/miniprogram-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TV Remote Control 小程序共享协议核心：RFC 6455 帧、HKDF-SHA256/AES-256-GCM 会话加密、防重放窗口、信封构造。与 agent 端（Kotlin）及 Rust core 的黄金向量保持一致。",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^1.3.0",
+    "@noble/hashes": "^1.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.0"
+  }
+}

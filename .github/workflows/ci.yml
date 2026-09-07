@@ -28,6 +28,23 @@ jobs:
           GRADLE_USER_HOME: ${{ runner.temp }}/gradle-user-home
         run: ./gradlew --no-daemon :controller:testDebugUnitTest :controller:lintDebug :controller:assembleDebug
 
+  miniprogram-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Typecheck
+        working-directory: miniprograms/core
+        run: |
+          npm install
+          npx tsc --noEmit
+      - name: Tests (RFC 5869 vectors + protocol consistency)
+        working-directory: miniprograms/core
+        run: npm test
+
   rust-core:
     runs-on: ubuntu-latest
     timeout-minutes: 45
