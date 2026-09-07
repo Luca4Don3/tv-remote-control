@@ -13,6 +13,7 @@ import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha256";
 import { gcm } from "@noble/ciphers/aes";
 import { readCounterBigEndian, writeCounterBigEndian } from "./frame.js";
+import { utf8Encode } from "./text.js";
 
 export const SECRET_BYTES = 32;
 export const RANDOM_BYTES = 32;
@@ -38,8 +39,8 @@ export function deriveSessionKeys(
   salt.set(clientRandom, 0);
   salt.set(serverRandom, clientRandom.length);
   return {
-    clientToServer: hkdf(sha256, psk, salt, new TextEncoder().encode("tvremote c2s key"), SECRET_BYTES),
-    serverToClient: hkdf(sha256, psk, salt, new TextEncoder().encode("tvremote s2c key"), SECRET_BYTES),
+    clientToServer: hkdf(sha256, psk, salt, utf8Encode("tvremote c2s key"), SECRET_BYTES),
+    serverToClient: hkdf(sha256, psk, salt, utf8Encode("tvremote s2c key"), SECRET_BYTES),
   };
 }
 
@@ -108,8 +109,4 @@ export class DirectionCipher {
   }
 }
 
-export function randomBytes(size: number): Uint8Array {
-  const out = new Uint8Array(size);
-  crypto.getRandomValues(out);
-  return out;
-}
+export { randomBytes, setRandomSource } from "./random.js";

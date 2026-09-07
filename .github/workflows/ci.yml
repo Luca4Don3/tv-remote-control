@@ -44,6 +44,11 @@ jobs:
       - name: Tests (RFC 5869 vectors + protocol consistency)
         working-directory: miniprograms/core
         run: npm test
+      - name: WeChat app typecheck
+        working-directory: miniprograms/wechat
+        run: |
+          npm install
+          npm run typecheck
 
   rust-core:
     runs-on: ubuntu-latest

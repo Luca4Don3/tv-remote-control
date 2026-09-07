@@ -1,0 +1,26 @@
+{
+  "description": "TV 遥控调试通道（开发调试版，仅 Debug 构建 agent 可用）",
+  "packOptions": {
+    "ignore": [
+      { "type": "folder", "value": "node_modules" },
+      { "type": "folder", "value": "miniprogram_npm" }
+    ]
+  },
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
+  },
+  "appid": "touristappid",
+  "projectname": "tvrc-debug-wechat",
+  "libVersion": "3.0.0",
+  "condition": {}
+}

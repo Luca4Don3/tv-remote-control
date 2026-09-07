@@ -1,0 +1,30 @@
+<view class="page">
+  <view class="status {{state === 'connected' ? 'ok' : state === 'error' ? 'bad' : ''}}">{{stateText}}</view>
+
+  <view class="pad">
+    <button
+      wx:for="{{keys}}"
+      wx:key="key"
+      class="key {{item.key.startsWith('DPAD') ? 'dpad' : ''}}"
+      data-key="{{item.key}}"
+      bindtap="onKey"
+      disabled="{{state !== 'connected'}}"
+    >{{item.label}}</button>
+  </view>
+
+  <view class="label">文本输入（草稿 600ms 防抖，回车提交）</view>
+  <input
+    class="input"
+    value="{{draft}}"
+    bindinput="onDraftInput"
+    bindconfirm="onDraftCommit"
+    confirm-type="send"
+    placeholder="在电视上输入文本"
+    disabled="{{state !== 'connected'}}"
+  />
+  <button class="btn commit" bindtap="onDraftCommit" disabled="{{state !== 'connected' || !draft}}">提交文本</button>
+
+  <view class="foot">
+    <button class="btn secondary" bindtap="onDisconnect">断开并返回</button>
+  </view>
+</view>

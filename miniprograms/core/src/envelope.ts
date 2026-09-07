@@ -8,6 +8,7 @@
  */
 
 import type { IncomingFrame } from "./frame.js";
+import { utf8Encode, utf8Decode } from "./text.js";
 import { OPCODE_BINARY, OPCODE_PING, OPCODE_PONG, OPCODE_TEXT } from "./frame.js";
 
 export const PROTOCOL_VERSION = 1;
@@ -28,7 +29,9 @@ function assertValid(envelope: Envelope): void {
   if (envelope.protocolVersion !== PROTOCOL_VERSION) throw new Error("unsupported protocolVersion");
   if (!IDENTIFIER.test(envelope.requestId)) throw new Error("invalid requestId");
   if (envelope.sessionId !== "" && !IDENTIFIER.test(envelope.sessionId)) throw new Error("invalid sessionId");
-  if (envelope.sequence <= 0n) throw new Error("sequence must be >= 1");
+  // sequence=0 仅心跳信封使用（对齐 Kotlin：fire-and-forget 探活无命令语义）；
+  // 命令层（DebugWsSession）自行保证严格递增且从 1 起
+  if (envelope.sequence < 0n) throw new Error("sequence must be >= 0");
   if (!TYPE.test(envelope.type)) throw new Error("invalid type");
 }
 
@@ -42,12 +45,12 @@ export function encodeEnvelope(envelope: Envelope): Uint8Array {
     type: envelope.type,
     payload: envelope.payload,
   });
-  return new TextEncoder().encode(text);
+  return utf8Encode(text);
 }
 
 /** 解析服务端信封。 */
 export function decodeEnvelope(bytes: Uint8Array): Envelope {
-  const raw = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+  const raw = JSON.parse(utf8Decode(bytes)) as Record<string, unknown>;
   const envelope: Envelope = {
     protocolVersion: Number(raw.protocolVersion),
     requestId: String(raw.requestId),
