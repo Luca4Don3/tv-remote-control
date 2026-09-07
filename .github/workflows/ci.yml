@@ -138,6 +138,13 @@ jobs:
             -target arm64-apple-ios16.0 \
             -sdk "$(xcrun -sdk iphoneos --show-sdk-path)" \
             macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift
+      - name: Prepare iOS SwiftPM vendored sources (typecheck/link/xctest prerequisites)
+        run: |
+          mkdir -p ios-controller/Sources/RustBindings ios-controller/Sources/ZigCore ios-controller/VendorModules/Rust
+          cp core-rs/bindings/swift/tvremote_core.swift ios-controller/Sources/RustBindings/
+          cp macos-controller/Sources/TVRemoteCoreLogic/CoreLogic.swift ios-controller/Sources/ZigCore/
+          cp core-rs/bindings/swift/tvremote_coreFFI.h ios-controller/VendorModules/Rust/
+          cp core-rs/bindings/swift/tvremote_coreFFI.modulemap ios-controller/VendorModules/Rust/module.modulemap
       - name: iOS controller typecheck (SwiftUI shell + Rust FFI + Zig core header)
         run: |
           swiftc -swift-version 6 -typecheck \
