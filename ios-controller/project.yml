@@ -40,7 +40,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.tvrc.ios.app
         TARGETED_DEVICE_FAMILY: "1"
   TVRemoteClip:
-    type: app-extension.app-clips
+    type: app-extension
+    subtype: app-clips
     platform: iOS
     sources:
       - path: AppClip
