@@ -53,7 +53,10 @@ class MainActivity : ComponentActivity() {
 
     internal sealed class UiState {
         data object Idle : UiState()
-        data class Discovering(val progress: String) : UiState()
+        data class Discovering(
+            val progress: String,
+            val found: List<DiscoveryClient.DiscoveredTv> = emptyList(),
+        ) : UiState()
         data class Pairing(val host: String, val sas: String?, val error: String?) : UiState()
         data class Connected(
             val host: String,
@@ -95,12 +98,18 @@ class MainActivity : ComponentActivity() {
                 }
                 runOnUiThread {
                     if (found.isEmpty()) {
-                        state.value = UiState.Error("未发现电视。请确认电视端应用已启动并处于同一局域网。")
+                        // 未发现不阻塞：仍可手动输入电视 IP 进入配对
+                        state.value = UiState.Discovering("未发现电视，可手动输入电视 IP 配对。")
                     } else {
-                        state.value = UiState.Discovering("发现 ${found.joinToString { it.displayName }}，请输入配对码或 IP。")
+                        state.value = UiState.Discovering("发现 ${found.size} 台电视，选择后输入配对码。", found)
                     }
                 }
             }
+        }
+
+        /** 选中电视（发现列表点击或手动 IP）：进入配对阶段输入 6 位码。 */
+        fun selectTv(host: String) {
+            state.value = UiState.Pairing(host = host.trim(), sas = null, error = null)
         }
 
         fun startPairing(host: String, code: String, controllerName: String) {
@@ -234,7 +243,7 @@ class MainActivity : ComponentActivity() {
 internal fun Root(state: MutableState<MainActivity.UiState>, callbacks: MainActivity.Callbacks) {
     when (val current = state.value) {
         is MainActivity.UiState.Idle -> IdleScreen(onDiscover = { callbacks.startDiscovery() })
-        is MainActivity.UiState.Discovering -> DiscoveringScreen(current.progress)
+        is MainActivity.UiState.Discovering -> DiscoveringScreen(current, callbacks)
         is MainActivity.UiState.Pairing -> PairingScreen(current, callbacks)
         is MainActivity.UiState.Connected -> RemoteScreen(current, callbacks)
         is MainActivity.UiState.Error -> ErrorScreen(current.message) { state.value = MainActivity.UiState.Idle }
@@ -257,15 +266,45 @@ private fun IdleScreen(onDiscover: () -> Unit) {
 }
 
 @Composable
-private fun DiscoveringScreen(progress: String) {
+private fun DiscoveringScreen(state: MainActivity.UiState.Discovering, callbacks: MainActivity.Callbacks) {
+    var manualHost by remember { mutableStateOf("") }
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        CircularProgressIndicator()
+        Text("发现电视", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        Text(state.progress, fontSize = 13.sp)
         Spacer(Modifier.height(16.dp))
-        Text(progress)
+        // 发现列表：选择电视 → 配对阶段输入 6 位码
+        state.found.forEach { tv ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Text("${tv.displayName}（${tv.address}）", fontSize = 14.sp)
+                Button(onClick = { callbacks.selectTv(tv.address) }) { Text("配对") }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        // 手动 IP：未发现/跨网段时仍可进入配对
+        OutlinedTextField(
+            value = manualHost,
+            onValueChange = { manualHost = it.trim() },
+            label = { Text("手动输入电视 IP") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = { callbacks.selectTv(manualHost) },
+            enabled = manualHost.isNotBlank(),
+        ) { Text("手动连接") }
+        Spacer(Modifier.height(12.dp))
+        TextButton(onClick = { callbacks.startDiscovery() }) { Text("重新搜索") }
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = { callbacks.disconnect() }) { Text("返回") }
     }
 }
 
