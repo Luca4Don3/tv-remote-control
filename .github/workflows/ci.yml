@@ -158,6 +158,14 @@ jobs:
           cp "${RUNNER_TEMP}/zig-ios-sim-core/lib/"lib*.a ios-controller/VendorLib/
           cd ios-controller
           xcodegen generate
+          # xcodegen 2.46 生成 objectVersion 77（Xcode 16 项目格式）——runner 的 Xcode 15.4 打不开，
+          # 切到可用的 Xcode 16+（macos-14 image 预装多个版本）
+          XCODE16="$(ls -d /Applications/Xcode_1[6-9]*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$XCODE16" ]; then
+            echo "Using $XCODE16"
+            export DEVELOPER_DIR="$XCODE16/Contents/Developer"
+          fi
+          xcodebuild -version
           xcodebuild build \
             -project TVRemoteController.xcodeproj \
             -scheme TVRemoteApp \
