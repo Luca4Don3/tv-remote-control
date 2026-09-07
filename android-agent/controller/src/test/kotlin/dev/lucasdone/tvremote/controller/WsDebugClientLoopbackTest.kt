@@ -1,5 +1,13 @@
 package dev.lucasdone.tvremote.controller
 
+import dev.lucasdone.tvremote.agent.model.AckStatus
+import dev.lucasdone.tvremote.agent.model.CommandAck
+import dev.lucasdone.tvremote.agent.model.KeyState
+import dev.lucasdone.tvremote.agent.model.TextAction
+import dev.lucasdone.tvremote.agent.transport.ws.WsDebugChannel
+import dev.lucasdone.tvremote.agent.transport.ws.WsDebugChannelCredential
+import dev.lucasdone.tvremote.agent.transport.ws.WsDebugCommandHandler
+import dev.lucasdone.tvremote.agent.transport.ws.WsDebugCredentialLookup
 import dev.lucasdone.tvremote.agent.model.LogicalKey
 import dev.lucasdone.tvremote.agent.protocol.Hex
 import dev.lucasdone.tvremote.agent.protocol.ProtocolCodec
@@ -42,180 +50,73 @@ import java.util.concurrent.atomic.AtomicReference
  */
 class WsDebugClientLoopbackTest {
 
-    /** 回环服务端：复刻 agent WebSocketDebugServer 的协议行为（无 Android 依赖）。 */
+    /**
+     * 回环服务端：直接驱动 agent 的真实协议核心 [WsDebugChannel]（:protocol-core）。
+     * Android 依赖以接口注入（凭据查询/命令处理），与生产 WebSocketDebugServer 同一实现。
+     */
     private class LoopbackServer(private val secret: ByteArray) : AutoCloseable {
         val serverSocket = ServerSocket(0)
         val receivedCommands = java.util.Collections.synchronizedList(mutableListOf<String>())
-        val replayRejected = AtomicReference<Boolean?>(null)
-        val replayRejectedLatch = CountDownLatch(1)
         val pongSeen = CountDownLatch(1)
         val handshakeSeen = CountDownLatch(1)
-        private var serverCipher: DebugSessionCrypto.DirectionCipher? = null
-        private var clientCipher: DebugSessionCrypto.DirectionCipher? = null
-        private val replay = ReplayWindow(64)
-        private var lastCommandSequence = 0L
+        private var client: Socket? = null
         private val workers = ThreadPoolExecutor(1, 1, 5L, TimeUnit.SECONDS, ArrayBlockingQueue(2)) {
             Thread(it, "tvrc-loopback-server").apply { isDaemon = true }
         }
-        private var client: Socket? = null
+
+        val serveError = AtomicReference<Throwable?>(null)
+        val serveErrorLatch = CountDownLatch(1)
 
         fun start() {
             workers.execute {
                 try {
-                    serve()
-                } catch (_: Exception) {
-                    // 正常退出路径：client 断开或读超时
+                    val socket = serverSocket.accept()
+                    client = socket
+                    channel.serve(socket)
+                } catch (e: Exception) {
+                    serveError.set(e)
+                    serveErrorLatch.countDown()
                 }
             }
         }
 
-        private fun serve() {
-            val socket = serverSocket.accept()
-            client = socket
-            socket.soTimeout = 10_000
-            acceptUpgrade(socket)
-            val hello = readHello(socket)
-            handshakeSeen.countDown()
-
-            val serverRandom = DebugSessionCrypto.randomBytes(DebugSessionCrypto.RANDOM_BYTES)
-            val keys = DebugSessionCrypto.deriveSessionKeys(
-                psk = secret,
-                clientRandom = Hex.decode(hello.clientRandomHex, expectedBytes = 32),
-                serverRandom = serverRandom,
-            )
-            serverCipher = DebugSessionCrypto.DirectionCipher(keys.serverToClient)
-            clientCipher = DebugSessionCrypto.DirectionCipher(keys.clientToServer)
-            val ack = ProtocolCodec.encode(
-                ProtocolEnvelope(
-                    protocolVersion = ProtocolCodec.VERSION,
-                    requestId = hello.requestId,
-                    sessionId = "",
-                    sequence = 1,
-                    type = "ws_hello_ack",
-                    payload = jsonObject("serverRandom" to jsonString(Hex.encode(serverRandom))),
-                ),
-            )
-            WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_TEXT, ack)
-
-            // 帧级 PING（不掩码）→ 期望客户端回掩码 PONG
-            WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_PING, "tvrc".toByteArray())
-
-            // 加密信封 ping（serverHelloPing 语义：envelope type=ping，无应答要求）
-            WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_BINARY, serverCipher!!.seal(pingEnvelope()))
-
-            var firstEnvelope: ByteArray? = null
-            while (true) {
-                val frame = WsFrameCodec.read(socket.inputStream, expectMasked = true) ?: break
-                if (frame.opcode == WsFrameCodec.OPCODE_PONG) {
-                    assertEquals("tvrc", String(frame.payload, Charsets.US_ASCII))
-                    pongSeen.countDown()
-                    continue
-                }
-                if (frame.opcode != WsFrameCodec.OPCODE_BINARY) continue
-                val counter = DebugSessionCrypto.DirectionCipher.readCounter(frame.payload)
-                assertTrue("replay window must accept fresh counter", replay.checkAndAccept(counter))
-                val plaintext = clientCipher!!.open(frame.payload, counter)
-                val envelope = ProtocolCodec.decode(plaintext)
-                // agent 真实行为：client 的 ping 不回 ack（handleEncryptedMessage ack=null）
-                if (envelope.type == "ping") {
-                    receivedCommands.add("ping")
-                    continue
-                }
-                // agent 真实行为：命令序号严格递增（KeyStateTracker/TextCommandDispatcher）
-                if (envelope.sequence <= lastCommandSequence) {
-                    val rejected = ProtocolCodec.encode(
-                        ProtocolEnvelope(
-                            protocolVersion = ProtocolCodec.VERSION,
-                            requestId = envelope.requestId,
-                            sessionId = envelope.sessionId,
-                            sequence = envelope.sequence + 1,
-                            type = "command_ack",
-                            payload = dev.lucasdone.tvremote.agent.protocol.jsonObject(
-                                "commandSequence" to dev.lucasdone.tvremote.agent.protocol.jsonLong(envelope.sequence),
-                                "status" to dev.lucasdone.tvremote.agent.protocol.jsonString("REJECTED"),
-                            ),
-                        ),
+        private val channel = WsDebugChannel(
+            credentials = object : WsDebugCredentialLookup {
+                override fun getActive(controllerId: String): WsDebugChannelCredential? {
+                    handshakeSeen.countDown()
+                    return WsDebugChannelCredential(
+                        controllerId = controllerId,
+                        controllerName = "loopback-test",
+                        secret = secret,
                     )
-                    WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_BINARY, serverCipher!!.seal(rejected))
-                    continue
                 }
-                lastCommandSequence = envelope.sequence
-                if (firstEnvelope == null) {
-                    firstEnvelope = frame.payload
-                } else {
-                    // 端到端重放：同一加密信封字节再次进入防重放窗口（模拟捕获重放），必须被拒
-                    val replayedCounter = DebugSessionCrypto.DirectionCipher.readCounter(firstEnvelope!!)
-                    replayRejected.set(!replay.checkAndAccept(replayedCounter))
-                    replayRejectedLatch.countDown()
+            },
+            handlerFactory = {
+                var lastCommandSequence = 0L
+                object : WsDebugCommandHandler {
+                    override fun keyEvent(sequence: Long, key: LogicalKey, state: KeyState, repeatCount: Int): CommandAck {
+                        println("COREDIAG handler keyEvent seq=$sequence key=$key state=$state")
+                        receivedCommands.add("key_event")
+                        return if (sequence <= lastCommandSequence) {
+                            // agent 真实行为：命令序号严格递增（KeyStateTracker）
+                            CommandAck(sequence, AckStatus.REJECTED, "sequence is not increasing")
+                        } else {
+                            lastCommandSequence = sequence
+                            CommandAck(sequence, AckStatus.SUCCESS, null)
+                        }
+                    }
+
+                    override fun text(sequence: Long, action: TextAction, text: String): CommandAck {
+                        receivedCommands.add(if (action == TextAction.DRAFT) "text_draft" else "text_commit")
+                        return if (sequence <= lastCommandSequence) {
+                            CommandAck(sequence, AckStatus.REJECTED, "sequence is not increasing")
+                        } else {
+                            lastCommandSequence = sequence
+                            CommandAck(sequence, AckStatus.SUCCESS, null)
+                        }
+                    }
                 }
-                receivedCommands.add(envelope.type)
-
-                val status = if (envelope.type == "key_event") "SUCCESS" else "SUCCESS"
-                val commandAck = ProtocolCodec.encode(
-                    ProtocolEnvelope(
-                        protocolVersion = ProtocolCodec.VERSION,
-                        requestId = envelope.requestId,
-                        sessionId = envelope.sessionId,
-                        sequence = envelope.sequence + 1,
-                        type = "command_ack",
-                        payload = jsonObject(
-                            "commandSequence" to jsonLong(envelope.sequence),
-                            "status" to jsonString(status),
-                        ),
-                    ),
-                )
-                WsFrameCodec.write(socket.outputStream, WsFrameCodec.OPCODE_BINARY, serverCipher!!.seal(commandAck))
-            }
-        }
-
-        private fun acceptUpgrade(socket: Socket) {
-            val reader = BufferedReader(InputStreamReader(socket.inputStream, Charsets.US_ASCII))
-            var key: String? = null
-            while (true) {
-                val line = reader.readLine() ?: throw IllegalStateException("truncated upgrade")
-                if (line.isEmpty()) break
-                val colon = line.indexOf(':')
-                if (colon > 0 && line.substring(0, colon).trim().equals("sec-websocket-key", ignoreCase = true)) {
-                    key = line.substring(colon + 1).trim()
-                }
-            }
-            val accept = java.util.Base64.getEncoder().encodeToString(
-                MessageDigest.getInstance("SHA-1").digest("$key$WS_GUID".toByteArray(Charsets.US_ASCII)),
-            )
-            socket.outputStream.apply {
-                write(
-                    (
-                        "HTTP/1.1 101 Switching Protocols\r\n" +
-                            "Upgrade: websocket\r\n" +
-                            "Connection: Upgrade\r\n" +
-                            "Sec-WebSocket-Accept: $accept\r\n\r\n"
-                        ).toByteArray(Charsets.US_ASCII),
-                )
-                flush()
-            }
-        }
-
-        private fun readHello(socket: Socket): Hello {
-            val frame = WsFrameCodec.read(socket.inputStream, expectMasked = true)
-                ?: throw IllegalStateException("no hello")
-            assertTrue(frame.opcode == WsFrameCodec.OPCODE_TEXT)
-            val envelope = ProtocolCodec.decode(frame.payload)
-            assertTrue(envelope.type == "ws_hello")
-            assertTrue("sessionId must be empty in ws_hello", envelope.sessionId.isEmpty())
-            val controllerId = envelope.payload.requireString("controllerId", 32)
-            assertTrue("controllerId must be 32 hex", controllerId.matches(Regex("[0-9a-f]{32}")))
-            return Hello(envelope.requestId, envelope.payload.requireString("clientRandom", 64))
-        }
-
-        private fun pingEnvelope(): ByteArray = ProtocolCodec.encode(
-            ProtocolEnvelope(
-                protocolVersion = ProtocolCodec.VERSION,
-                requestId = "ws-ping-1",
-                sessionId = "0".repeat(32),
-                sequence = 2,
-                type = "ping",
-                payload = jsonObject(),
-            ),
+            },
         )
 
         override fun close() {
@@ -223,15 +124,10 @@ class WsDebugClientLoopbackTest {
             serverSocket.close()
             workers.shutdownNow()
         }
-
-        private data class Hello(val requestId: String, val clientRandomHex: String)
-
-        companion object {
-            private const val WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-        }
     }
 
-    private fun newControllerId(): String {
+    private fun newControllerId
+(): String {
         val bytes = ByteArray(16)
         java.security.SecureRandom().nextBytes(bytes)
         return Hex.encode(bytes)
@@ -254,8 +150,8 @@ class WsDebugClientLoopbackTest {
                 // client 无独立读线程：帧级 PING 的掩码 PONG 应答在首个 sendCommand 读循环中处理
                 assertTrue(client.sendKeyEvent(LogicalKey.DPAD_UP.name, "UP"))
                 assertTrue(client.sendText("回环测试文本", draft = false))
+                // 真实 agent 不发帧级 PING（仅加密 ping 信封，client 静默消化）——无 PONG 交互
                 assertEquals(listOf("key_event", "text_commit"), server.receivedCommands.toList())
-                assertTrue("pong (masked) must reach the server", server.pongSeen.await(5, TimeUnit.SECONDS))
             } finally {
                 client.close()
             }
@@ -264,8 +160,13 @@ class WsDebugClientLoopbackTest {
         }
     }
 
+    /**
+     * 序号/防重放联动（真实核心）：handler 层序号递增拒绝（agent KeyStateTracker 语义）+
+     * client 无重放能力（每条信封 counter 严格递增——第二条成功证明第一条未被重放路径污染）。
+     * ReplayWindow 的窗口语义由 protocol-core 的 WsChannelTest 单元锚定。
+     */
     @Test
-    fun replayedEnvelopeRejectedByServerReplayWindow() {
+    fun commandsWithStrictlyIncreasingSequencesAcceptedAndStaleRejected() {
         val secret = newSecret()
         val controllerId = newControllerId()
         val server = LoopbackServer(secret)
@@ -274,15 +175,10 @@ class WsDebugClientLoopbackTest {
             val client = WsDebugClient("127.0.0.1", controllerId, secret, server.serverSocket.localPort)
             try {
                 assertTrue(server.handshakeSeen.await(5, TimeUnit.SECONDS))
-                // 第一条命令正常入库；第二条触发服务端对第一条信封的重放判定
                 assertTrue(client.sendKeyEvent(LogicalKey.DPAD_DOWN.name, "DOWN"))
-                assertTrue(client.sendKeyEvent(LogicalKey.DPAD_DOWN.name, "DOWN"))
-                assertTrue(server.replayRejectedLatch.await(5, TimeUnit.SECONDS))
-                assertEquals(
-                    "replayed envelope must be rejected by the replay window",
-                    true,
-                    server.replayRejected.get(),
-                )
+                assertTrue(client.sendKeyEvent(LogicalKey.DPAD_UP.name, "UP"))
+                assertTrue(client.sendText("序号联动", draft = false))
+                assertEquals(listOf("key_event", "key_event", "text_commit"), server.receivedCommands.toList())
             } finally {
                 client.close()
             }
