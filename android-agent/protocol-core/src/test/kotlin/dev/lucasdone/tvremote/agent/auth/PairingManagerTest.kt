@@ -29,6 +29,40 @@ class PairingManagerTest {
         assertNull(manager.currentWindow())
     }
 
+    /** 扫码路径：SAS 计算输入必须是 token（扫码端只持有 token，无法独立核对 6 位码）。 */
+    @Test
+    fun tokenPathComputesSasFromToken() {
+        val manager = PairingManager(nowMs = { 1_000L }, random = DeterministicRandom())
+        val window = manager.openWindow()
+        val fingerprint = ByteArray(32) { it.toByte() }
+        val submission = manager.submitWithToken(
+            token = window.qrToken,
+            controllerName = "Scanner Controller",
+            controllerNonce = ByteArray(32) { (it + 32).toByte() },
+            certificateFingerprint = fingerprint,
+        ) as PairingSubmission.AwaitingTvConfirmation
+
+        val expected = PairingTranscript.computeSas(
+            code = window.qrToken,
+            protocolVersion = 1,
+            certificateFingerprint = fingerprint,
+            tvNonce = submission.details.tvNonce,
+            controllerNonce = ByteArray(32) { (it + 32).toByte() },
+            controllerName = "Scanner Controller",
+        )
+        assertEquals(expected, submission.details.sas)
+        // 与 6 位码路径的 SAS 不同（输入不同——同码同指纹时两路径不共享 SAS）
+        val codeSas = PairingTranscript.computeSas(
+            code = window.code,
+            protocolVersion = 1,
+            certificateFingerprint = fingerprint,
+            tvNonce = submission.details.tvNonce,
+            controllerNonce = ByteArray(32) { (it + 32).toByte() },
+            controllerName = "Scanner Controller",
+        )
+        assertTrue("token-path SAS must differ from code-path SAS", expected != codeSas)
+    }
+
     @Test
     fun rejectsExpiredWindow() {
         var now = 1_000L

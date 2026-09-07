@@ -85,7 +85,7 @@ class PairingManager(
             if (current.failedAttempts >= MAX_FAILED_ATTEMPTS) close(current, "too many failed attempts")
             return PairingSubmission.Rejected("pairing rejected")
         }
-        return beginPairing(current, controllerName, controllerNonce, certificateFingerprint)
+        return beginPairing(current, controllerName, controllerNonce, certificateFingerprint, sasCode = current.window.code)
     }
 
     /**
@@ -112,7 +112,9 @@ class PairingManager(
             return PairingSubmission.Rejected("pairing rejected")
         }
         current.qrTokenConsumed = true
-        return beginPairing(current, controllerName, controllerNonce, certificateFingerprint)
+        // 扫码路径 SAS 输入 = token（扫码端只持有 token，无法知道 6 位码——
+        // 若 SAS 仍用 code，扫码端无法独立核对，SAS 退化为装饰）
+        return beginPairing(current, controllerName, controllerNonce, certificateFingerprint, sasCode = token)
     }
 
     private fun beginPairing(
@@ -120,6 +122,7 @@ class PairingManager(
         controllerName: String,
         controllerNonce: ByteArray,
         certificateFingerprint: ByteArray,
+        sasCode: String,
     ): PairingSubmission {
         if (!validControllerName(controllerName)) return PairingSubmission.Rejected("invalid controller name")
         if (controllerNonce.size != NONCE_BYTES) return PairingSubmission.Rejected("invalid controller nonce")
@@ -130,7 +133,7 @@ class PairingManager(
             pairingId = Hex.encode(randomBytes(PAIRING_ID_BYTES)),
             controllerName = normalizedName,
             sas = PairingTranscript.computeSas(
-                code = current.window.code,
+                code = sasCode,
                 protocolVersion = PROTOCOL_VERSION,
                 certificateFingerprint = certificateFingerprint,
                 tvNonce = current.window.tvNonce,

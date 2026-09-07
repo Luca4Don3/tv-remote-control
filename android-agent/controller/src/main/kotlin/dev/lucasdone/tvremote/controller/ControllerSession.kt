@@ -1,6 +1,7 @@
 package dev.lucasdone.tvremote.controller
 
 import dev.lucasdone.tvremote.agent.auth.AuthTranscript
+import dev.lucasdone.tvremote.agent.auth.PairingTranscript
 import dev.lucasdone.tvremote.agent.protocol.Hex
 import dev.lucasdone.tvremote.agent.protocol.JsonValue
 import dev.lucasdone.tvremote.agent.protocol.ProtocolCodec
@@ -27,8 +28,9 @@ import java.security.SecureRandom
  */
 class ControllerSession(
     private val connectionFactory: () -> dev.lucasdone.tvremote.controller.net.ConnectionTransport,
+    random: SecureRandom = SecureRandom(),
 ) {
-    private val random = SecureRandom()
+    private val random: SecureRandom = random
     private var sessionId: String = ""
     private var connection: dev.lucasdone.tvremote.controller.net.ConnectionTransport? = null
     private var connectionUsedForPairing = false
@@ -63,7 +65,26 @@ class ControllerSession(
         )
         val sasMessage = receiveExpect("pairing_sas", "pair_rejected") ?: throw PairingRejectedException("pairing unavailable")
         if (sasMessage.type != "pairing_sas") throw PairingRejectedException("pairing rejected on TV")
-        return sasMessage.payload.requireString("sas", 6)
+        // 独立重算 SAS（对齐桌面 Zig 客户端）：code + 本端证书指纹 + 双 nonce + 名称。
+        // 仅展示服务端发来的 SAS 会让中间人转发配对码并伪造显示，SAS 失去身份核对意义。
+        val tvNonce = Hex.decode(sasMessage.payload.requireString("tvNonce", 64))
+        val expected = PairingTranscript.computeSas(
+            code = code,
+            protocolVersion = ProtocolCodec.VERSION,
+            certificateFingerprint = pairingTransport.peerFingerprint,
+            tvNonce = tvNonce,
+            controllerNonce = controllerNonce,
+            controllerName = controllerName,
+        )
+        val reported = sasMessage.payload.requireString("sas", 6)
+        if (!java.security.MessageDigest.isEqual(
+                expected.toByteArray(Charsets.US_ASCII),
+                reported.toByteArray(Charsets.US_ASCII),
+            )
+        ) {
+            throw PairingRejectedException("SAS mismatch — possible man-in-the-middle")
+        }
+        return reported
     }
 
     /**

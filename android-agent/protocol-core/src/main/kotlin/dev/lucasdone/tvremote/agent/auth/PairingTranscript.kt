@@ -44,7 +44,11 @@ object PairingTranscript {
         controllerNonce: ByteArray,
         controllerName: String,
     ): String {
-        require(code.length == 6 && code.all(Char::isDigit)) { "pairing code must contain six digits" }
+        // SAS 输入：手输 6 位码，或扫码一次性 token（64 hex）——扫码端只持有 token
+        require(
+            (code.length == 6 && code.all(Char::isDigit)) ||
+                (code.length == 64 && code.all { it.isDigit() || it in 'a'..'f' })
+        ) { "sas input must be a six-digit code or a 64-hex token" }
         val mac = hmac(code, protocolVersion, certificateFingerprint, tvNonce, controllerNonce, controllerName)
         val firstWord = ((mac[0].toLong() and 0xffL) shl 24) or
             ((mac[1].toLong() and 0xffL) shl 16) or
@@ -61,7 +65,11 @@ object PairingTranscript {
         controllerNonce: ByteArray,
         controllerName: String,
     ): ByteArray {
-        require(code.length == 6 && code.all(Char::isDigit)) { "pairing code must contain six digits" }
+        // SAS 输入：手输 6 位码，或扫码一次性 token（64 hex）——扫码端只持有 token
+        require(
+            (code.length == 6 && code.all(Char::isDigit)) ||
+                (code.length == 64 && code.all { it.isDigit() || it in 'a'..'f' })
+        ) { "sas input must be a six-digit code or a 64-hex token" }
         val transcript = build(protocolVersion, certificateFingerprint, tvNonce, controllerNonce, controllerName)
         return Mac.getInstance("HmacSHA256").run {
             init(SecretKeySpec(code.toByteArray(StandardCharsets.US_ASCII), "HmacSHA256"))

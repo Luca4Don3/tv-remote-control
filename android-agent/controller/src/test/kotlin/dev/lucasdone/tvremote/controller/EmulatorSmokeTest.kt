@@ -141,7 +141,7 @@ class EmulatorSmokeTest {
         trustContext.init(null, arrayOf<TrustManager>(TofuTrustManager()), SecureRandom())
         val paired = pairOnTls(trustContext)
 
-        val session = ControllerSession { freshConnection(trustContext) }
+        val session = ControllerSession(connectionFactory = { freshConnection(trustContext) })
         val capabilities = session.authenticate(paired.controllerId, paired.secret, paired.tvCertificateFingerprint)
         assertTrue(capabilities.keySupport.containsKey("DPAD_DOWN"))
 
