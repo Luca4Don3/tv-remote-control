@@ -1,0 +1,7 @@
+{
+  "pages": ["pages/pair/pair", "pages/remote/remote"],
+  "window": {
+    "defaultTitle": "TV 遥控（调试）",
+    "titleBarColor": "#101418"
+  }
+}

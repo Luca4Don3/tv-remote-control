@@ -1,0 +1,11 @@
+{
+  "miniprogramRoot": "./",
+  "compileType": "mini",
+  "projectname": "tvrc-debug-alipay",
+  "appid": "2021000000000000",
+  "setting": {
+    "es6": true,
+    "postcss": true,
+    "minified": true
+  }
+}

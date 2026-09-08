@@ -49,6 +49,11 @@ jobs:
         run: |
           npm install
           npm run typecheck
+      - name: Alipay app typecheck
+        working-directory: miniprograms/alipay
+        run: |
+          npm install
+          npm run typecheck
 
   rust-core:
     runs-on: ubuntu-latest
