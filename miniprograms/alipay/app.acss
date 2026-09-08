@@ -1,0 +1,27 @@
+page {
+  background: #101418;
+  color: #e8eaed;
+  font-size: 30rpx;
+}
+.btn {
+  background: #1677ff;
+  color: #fff;
+  border-radius: 12rpx;
+  padding: 20rpx 0;
+  text-align: center;
+}
+.btn.disabled {
+  background: #3a4048;
+  color: #8a919a;
+}
+.input {
+  background: #1b2027;
+  border-radius: 10rpx;
+  padding: 16rpx 20rpx;
+  color: #e8eaed;
+}
+.label {
+  color: #9aa3ad;
+  font-size: 24rpx;
+  margin: 24rpx 0 8rpx;
+}

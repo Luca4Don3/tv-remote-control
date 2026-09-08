@@ -1,0 +1,27 @@
+.page {
+  padding: 40rpx;
+}
+
+.hint {
+  color: #9aa3ad;
+  font-size: 24rpx;
+  line-height: 1.5;
+  margin-bottom: 16rpx;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+  margin-top: 48rpx;
+}
+
+.secondary {
+  background: #2a3038;
+}
+
+.status {
+  margin-top: 32rpx;
+  color: #6fe38b;
+  font-size: 26rpx;
+}

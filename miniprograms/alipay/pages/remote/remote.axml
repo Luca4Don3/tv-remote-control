@@ -1,0 +1,30 @@
+<view class="page">
+  <view class="status {{state === 'connected' ? 'ok' : state === 'error' ? 'bad' : ''}}">{{stateText}}</view>
+
+  <view class="pad">
+    <button
+      a:for="{{keys}}"
+      a:key="key"
+      class="key {{item.key.startsWith('DPAD') ? 'dpad' : ''}}"
+      data-key="{{item.key}}"
+      onTap="onKey"
+      disabled="{{state !== 'connected'}}"
+    >{{item.label}}</button>
+  </view>
+
+  <view class="label">文本输入（草稿 600ms 防抖，回车提交）</view>
+  <input
+    class="input"
+    value="{{draft}}"
+    onInput="onDraftInput"
+    onConfirm="onDraftCommit"
+    confirm-type="send"
+    placeholder="在电视上输入文本"
+    disabled="{{state !== 'connected'}}"
+  />
+  <button class="btn commit" onTap="onDraftCommit" disabled="{{state !== 'connected' || !draft}}">提交文本</button>
+
+  <view class="foot">
+    <button class="btn secondary" onTap="onDisconnect">断开并返回</button>
+  </view>
+</view>

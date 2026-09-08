@@ -1,0 +1,16 @@
+{
+  "name": "@tvrc/miniprogram-alipay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TV 遥控支付宝小程序（开发调试版）：WS 调试通道客户端",
+  "dependencies": {
+    "@tvrc/miniprogram-core": "file:../core"
+  },
+  "devDependencies": {
+    "@mini-types/alipay": "^3.0.0",
+    "typescript": "^5.9.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
