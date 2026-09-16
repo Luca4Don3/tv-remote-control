@@ -6,11 +6,18 @@ import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.Log
 import dev.lucasdone.tvremote.agent.protocol.Hex
 import java.math.BigInteger
+import java.security.InvalidKeyException
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.security.UnrecoverableKeyException
 import java.util.Calendar
+import javax.crypto.AEADBadTagException
+import javax.crypto.BadPaddingException
 import javax.crypto.Cipher
 import javax.security.auth.x500.X500Principal
 
@@ -60,7 +67,7 @@ class KeystoreCredentialStore(context: Context) {
     fun getActive(controllerId: String): StoredCredential? {
         requireControllerId(controllerId)
         if (preferences.getString(stateKey(controllerId), null) != CredentialState.ACTIVE.name) return null
-        val secret = decrypt(preferences.getString(secretKey(controllerId), null) ?: return null)
+        val secret = readSecret(controllerId) ?: return null
         val name = preferences.getString(nameKey(controllerId), null)
             ?: throw IllegalStateException("paired controller metadata is incomplete")
         val fingerprint = Hex.decode(
@@ -69,6 +76,56 @@ class KeystoreCredentialStore(context: Context) {
             expectedBytes = 32,
         )
         return StoredCredential(controllerId, name, fingerprint, secret, CredentialState.ACTIVE)
+    }
+
+    private val recovery = KeystoreRecovery(
+        keyUsable = { probeWrappingKey() || probeWrappingKey() },
+        deleteKey = {
+            Log.w(TAG, "Rebuilding unusable pairing key")
+            deleteWrappingKey()
+        },
+        clearRecords = { clearAllCredentials() },
+        removeRecord = { controllerId ->
+            Log.w(TAG, "Dropping corrupt pairing record")
+            removeCorruptRecord(controllerId)
+        },
+    )
+
+    /**
+     * Decrypts a stored secret. A key-level failure is only repaired after [probeWrappingKey]
+     * confirms the wrapping key is unusable; otherwise data is preserved and the error is rethrown.
+     * A corrupt envelope drops only that record so healthy pairings survive.
+     */
+    private fun readSecret(controllerId: String): ByteArray? = recovery.run(controllerId) {
+        // Re-read each attempt: after a key repair clears the records, the retry must observe that the
+        // record is gone (null) instead of decrypting the stale ciphertext with the rebuilt key.
+        preferences.getString(secretKey(controllerId), null)?.let { decryptWith(getOrCreateKeyPair(), it) }
+    }
+
+    /** Non-destructive round trip proving the wrapping key can still be used for both directions. */
+    private fun probeWrappingKey(): Boolean = try {
+        val key = getOrCreateKeyPair()
+        val sample = ByteArray(32).also(SecureRandom()::nextBytes)
+        MessageDigest.isEqual(sample, decryptWith(key, encryptWith(key, sample)))
+    } catch (_: Exception) {
+        false
+    }
+
+    private fun removeCorruptRecord(controllerId: String) {
+        val editor = preferences.edit()
+        removeFromEditor(editor, controllerId)
+        check(editor.commit()) { "failed to drop corrupt pairing record" }
+    }
+
+    private fun clearAllCredentials() {
+        val editor = preferences.edit()
+        storedControllerIds().forEach { removeFromEditor(editor, it) }
+        check(editor.commit()) { "failed to reset unreadable pairing credentials" }
+    }
+
+    private fun deleteWrappingKey() {
+        val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        if (store.containsAlias(KEY_ALIAS)) store.deleteEntry(KEY_ALIAS)
     }
 
     @Synchronized
@@ -136,17 +193,19 @@ class KeystoreCredentialStore(context: Context) {
         ControllerSummary(controllerId, name)
     }.sortedBy { it.controllerName.lowercase() }
 
-    private fun encrypt(secret: ByteArray): String {
-        val publicKey = getOrCreateKeyPair().certificate.publicKey
+    private fun encrypt(secret: ByteArray): String = checkNotNull(
+        recovery.run(null) { encryptWith(getOrCreateKeyPair(), secret) },
+    ) { "pairing key repair did not yield ciphertext" }
+
+    private fun encryptWith(key: KeyStore.PrivateKeyEntry, secret: ByteArray): String {
         val cipher = Cipher.getInstance(rsaTransformation())
-        cipher.init(Cipher.ENCRYPT_MODE, publicKey)
+        cipher.init(Cipher.ENCRYPT_MODE, key.certificate.publicKey)
         return Base64.encodeToString(cipher.doFinal(secret), Base64.NO_WRAP)
     }
 
-    private fun decrypt(encoded: String): ByteArray {
-        val privateKey = getOrCreateKeyPair().privateKey
+    private fun decryptWith(key: KeyStore.PrivateKeyEntry, encoded: String): ByteArray {
         val cipher = Cipher.getInstance(rsaTransformation())
-        cipher.init(Cipher.DECRYPT_MODE, privateKey)
+        cipher.init(Cipher.DECRYPT_MODE, key.privateKey)
         return cipher.doFinal(Base64.decode(encoded, Base64.NO_WRAP))
     }
 
@@ -188,6 +247,7 @@ class KeystoreCredentialStore(context: Context) {
                 )
                     .setKeySize(2048)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
+                    .setDigests(KeyProperties.DIGEST_SHA1, KeyProperties.DIGEST_SHA256)
                     .build(),
             )
         } else {
@@ -211,6 +271,7 @@ class KeystoreCredentialStore(context: Context) {
     }
 
     companion object {
+        private const val TAG = "TvrcCredentials"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "tv_remote_controller_wrap_key"
         private const val RSA_OAEP_TRANSFORMATION = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
@@ -222,6 +283,22 @@ class KeystoreCredentialStore(context: Context) {
         private const val STATE_PREFIX = "state."
         private val CONTROLLER_ID = Regex("[A-Za-z0-9._:-]{1,128}")
     }
+}
+
+/**
+ * Candidate handling for a Keystore failure:
+ * - [KEY_REPAIR]: the wrapping key may be unusable (e.g. generated without the required OAEP
+ *   digest). This is only a candidate — [KeystoreRecovery] rebuilds the key solely after a
+ *   non-destructive self-test confirms it cannot be used.
+ * - [DROP_RECORD]: only the affected ciphertext is corrupt; healthy pairings must survive.
+ * - [PROPAGATE]: transient or unexpected, so callers fail loudly instead of discarding data.
+ */
+internal enum class KeystoreFailureAction { KEY_REPAIR, DROP_RECORD, PROPAGATE }
+
+internal fun classifyKeystoreFailure(error: Throwable): KeystoreFailureAction = when (error) {
+    is InvalidKeyException, is UnrecoverableKeyException -> KeystoreFailureAction.KEY_REPAIR
+    is AEADBadTagException, is BadPaddingException, is IllegalArgumentException -> KeystoreFailureAction.DROP_RECORD
+    else -> KeystoreFailureAction.PROPAGATE
 }
 
 enum class CredentialState { PENDING, ACTIVE }

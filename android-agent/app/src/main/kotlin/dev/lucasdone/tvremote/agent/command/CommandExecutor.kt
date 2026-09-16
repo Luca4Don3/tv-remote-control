@@ -3,6 +3,7 @@ package dev.lucasdone.tvremote.agent.command
 import dev.lucasdone.tvremote.agent.model.AckStatus
 import dev.lucasdone.tvremote.agent.model.CommandAck
 import dev.lucasdone.tvremote.agent.model.KeyEventCommand
+import dev.lucasdone.tvremote.agent.model.KeyState
 import dev.lucasdone.tvremote.agent.model.LogicalKey
 
 interface CommandExecutor {
@@ -15,12 +16,18 @@ class CommandDispatcher(
     private val tracker: KeyStateTracker,
     private val executors: List<CommandExecutor>,
 ) {
+    // Binds a held key to the executor that handled its DOWN, so REPEAT/UP and disconnect release
+    // always reach that same executor even if routing would change mid-press (e.g. a backend swap).
+    private val pressExecutors = mutableMapOf<LogicalKey, CommandExecutor>()
+
     @Synchronized
     fun dispatch(command: KeyEventCommand): CommandAck {
         val stateAck = tracker.validate(command)
         if (stateAck.status != AckStatus.SUCCESS) return stateAck
-        val executor = executors.firstOrNull { it.supports(command.key) }
-            ?: return CommandAck(command.sequence, AckStatus.UNSUPPORTED, "no executor supports this action")
+        val executor = when (command.state) {
+            KeyState.UP, KeyState.REPEAT -> pressExecutors[command.key] ?: firstSupporting(command.key)
+            KeyState.DOWN, KeyState.PRESS -> firstSupporting(command.key)
+        } ?: return CommandAck(command.sequence, AckStatus.UNSUPPORTED, "no executor supports this action")
         val ack = try {
             val status = executor.execute(command)
             CommandAck(command.sequence, status, if (status == AckStatus.SUCCESS) null else "executor rejected action")
@@ -29,13 +36,20 @@ class CommandDispatcher(
         } catch (_: RuntimeException) {
             CommandAck(command.sequence, AckStatus.EXECUTION_FAILED, "executor failed")
         }
-        if (ack.status == AckStatus.SUCCESS) tracker.commit(command)
+        if (ack.status == AckStatus.SUCCESS) {
+            tracker.commit(command)
+            when (command.state) {
+                KeyState.DOWN -> pressExecutors[command.key] = executor
+                KeyState.UP -> pressExecutors.remove(command.key)
+                KeyState.REPEAT, KeyState.PRESS -> Unit
+            }
+        }
         return ack
     }
 
     @Synchronized
     fun disconnect(): Map<LogicalKey, AckStatus> = tracker.releaseAll().associateWith { key ->
-        val executor = executors.firstOrNull { it.supports(key) } ?: return@associateWith AckStatus.UNSUPPORTED
+        val executor = pressExecutors.remove(key) ?: firstSupporting(key) ?: return@associateWith AckStatus.UNSUPPORTED
         try {
             executor.release(key)
         } catch (_: SecurityException) {
@@ -44,4 +58,6 @@ class CommandDispatcher(
             AckStatus.EXECUTION_FAILED
         }
     }
+
+    private fun firstSupporting(key: LogicalKey): CommandExecutor? = executors.firstOrNull { it.supports(key) }
 }

@@ -1,0 +1,17 @@
+package dev.lucasdone.tvremote.xiaomi
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED || !TvPreferences(context).startAtBoot) return
+        try { XiaomiAgentService.start(context) }
+        catch (error: RuntimeException) {
+            TvPreferences(context).startupFailure = true
+            Log.e("TvRemoteBoot", "Foreground startup failed: ${error.javaClass.simpleName}")
+        }
+    }
+}

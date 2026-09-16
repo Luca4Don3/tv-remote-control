@@ -5,6 +5,7 @@ import dev.lucasdone.tvremote.agent.model.KeyEventCommand
 import dev.lucasdone.tvremote.agent.model.KeyState
 import dev.lucasdone.tvremote.agent.model.LogicalKey
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CommandDispatcherTest {
@@ -63,6 +64,62 @@ class CommandDispatcherTest {
         key = key,
         state = state,
     )
+
+    @Test
+    fun releaseStaysBoundToTheExecutorThatHandledDown() {
+        var vendorAvailable = false
+        val system = RecordingSupportingExecutor(LogicalKey.MEDIA_PLAY_PAUSE)
+        val vendor = ConditionalExecutor { vendorAvailable }
+        val dispatcher = CommandDispatcher(KeyStateTracker(), listOf(vendor, system))
+
+        assertEquals(AckStatus.SUCCESS, dispatcher.dispatch(command(1, LogicalKey.MEDIA_PLAY_PAUSE, KeyState.DOWN)).status)
+        vendorAvailable = true // a refresh installs a vendor backend that now supports the key
+        assertEquals(AckStatus.SUCCESS, dispatcher.dispatch(command(2, LogicalKey.MEDIA_PLAY_PAUSE, KeyState.UP)).status)
+
+        assertEquals(listOf("system:DOWN", "system:UP"), system.events)
+        assertTrue(vendor.events.isEmpty())
+    }
+
+    @Test
+    fun disconnectReleasesViaTheBoundExecutor() {
+        var vendorAvailable = false
+        val system = RecordingSupportingExecutor(LogicalKey.MEDIA_PLAY_PAUSE)
+        val vendor = ConditionalExecutor { vendorAvailable }
+        val dispatcher = CommandDispatcher(KeyStateTracker(), listOf(vendor, system))
+
+        assertEquals(AckStatus.SUCCESS, dispatcher.dispatch(command(1, LogicalKey.MEDIA_PLAY_PAUSE, KeyState.DOWN)).status)
+        vendorAvailable = true
+        assertEquals(AckStatus.SUCCESS, dispatcher.disconnect()[LogicalKey.MEDIA_PLAY_PAUSE])
+
+        assertEquals(listOf("system:DOWN", "system:release"), system.events)
+        assertTrue(vendor.events.isEmpty())
+    }
+
+    private class RecordingSupportingExecutor(private val key: LogicalKey) : CommandExecutor {
+        val events = mutableListOf<String>()
+        override fun supports(key: LogicalKey) = key == this.key
+        override fun execute(command: KeyEventCommand): AckStatus {
+            events += "system:${command.state}"
+            return AckStatus.SUCCESS
+        }
+        override fun release(key: LogicalKey): AckStatus {
+            events += "system:release"
+            return AckStatus.SUCCESS
+        }
+    }
+
+    private class ConditionalExecutor(private val available: () -> Boolean) : CommandExecutor {
+        val events = mutableListOf<String>()
+        override fun supports(key: LogicalKey) = available() && key == LogicalKey.MEDIA_PLAY_PAUSE
+        override fun execute(command: KeyEventCommand): AckStatus {
+            events += "vendor:${command.state}"
+            return AckStatus.SUCCESS
+        }
+        override fun release(key: LogicalKey): AckStatus {
+            events += "vendor:release"
+            return AckStatus.SUCCESS
+        }
+    }
 
     private class RecordingExecutor : CommandExecutor {
         val executed = mutableListOf<LogicalKey>()

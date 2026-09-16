@@ -11,7 +11,7 @@ import dev.lucasdone.tvremote.agent.auth.PairingWindow
 import dev.lucasdone.tvremote.agent.auth.SessionManager
 import dev.lucasdone.tvremote.agent.command.CommandDispatcher
 import dev.lucasdone.tvremote.agent.command.TextCommandDispatcher
-import dev.lucasdone.tvremote.agent.media.MediaSessionCoordinator
+import dev.lucasdone.tvremote.agent.media.ControlMediaSession
 import dev.lucasdone.tvremote.agent.model.AckStatus
 import dev.lucasdone.tvremote.agent.model.KeyEventCommand
 import dev.lucasdone.tvremote.agent.model.KeyState
@@ -63,7 +63,7 @@ class ControlServer(
     private val sessionManager: SessionManager,
     private val dispatcherFactory: () -> CommandDispatcher,
     private val textDispatcherFactory: () -> TextCommandDispatcher,
-    private val mediaCoordinator: MediaSessionCoordinator,
+    private val mediaCoordinator: ControlMediaSession,
     private val mediaAvailable: () -> Boolean,
     private val capabilities: () -> JsonValue.ObjectValue,
     private val callbacks: ControlServerCallbacks,
@@ -265,6 +265,10 @@ class ControlServer(
             Log.i(TAG, "Control connection IO failure: ${error.javaClass.simpleName}: ${error.message ?: ""}")
         } catch (error: RuntimeException) {
             Log.e(TAG, "Control connection failed: ${error.javaClass.simpleName}", error)
+        } catch (error: Exception) {
+            // Checked failures (e.g. Keystore/credential crypto) must be reported here instead of
+            // escaping the worker as an uncaught exception.
+            Log.e(TAG, "Control connection rejected: ${error.javaClass.simpleName}", error)
         } finally {
             openSockets.remove(socket)
             val current = active.get()

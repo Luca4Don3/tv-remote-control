@@ -18,7 +18,9 @@ object DebugCredentialExporter {
 
     fun export(store: KeystoreCredentialStore): List<Entry> =
         store.controllerSummaries().mapNotNull { summary ->
-            val secret = store.getActive(summary.controllerId)?.secret ?: return@mapNotNull null
+            // Skip unreadable records instead of failing the whole debug export.
+            val secret = runCatching { store.getActive(summary.controllerId)?.secret }.getOrNull()
+                ?: return@mapNotNull null
             Entry(
                 controllerName = summary.controllerName,
                 controllerId = summary.controllerId,

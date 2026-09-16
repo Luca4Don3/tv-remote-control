@@ -184,7 +184,8 @@ class AgentService : Service(), ControlServerCallbacks {
             }
             AgentStatusRegistry.listening()
             refreshControllers()
-            updateNotification("等待已认证的控制端")
+            // A regenerated identity changed the certificate fingerprint, so old pairings cannot authenticate.
+            updateNotification(if (identity.regenerated) "安全身份已重建，请重新配对" else "等待已认证的控制端")
         } catch (error: Exception) {
             wsDebug?.close()
             discovery?.close()

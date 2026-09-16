@@ -10,9 +10,6 @@ import java.security.SecureRandom
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-data class MediaAttachOffer(val token: String, val expiresAtMs: Long)
-data class MediaAttachment(val attachmentId: Long, val channel: MediaPacketChannel)
-
 class MediaSessionCoordinator(
     private val random: SecureRandom = SecureRandom(),
     // 与 ControlServer/PairingManager/SessionManager 共用 System.nanoTime() 单调时钟，
@@ -22,7 +19,7 @@ class MediaSessionCoordinator(
     private val scheduleExpiry: (Long, () -> Unit) -> Unit = { delayMs, action ->
         EXPIRY_EXECUTOR.schedule(action, delayMs, TimeUnit.MILLISECONDS)
     },
-) : AutoCloseable {
+) : ControlMediaSession {
     private data class Pending(
         val controllerId: String,
         val sessionId: String,
@@ -41,7 +38,7 @@ class MediaSessionCoordinator(
     private var audio: PlaybackAudioCapture? = null
 
     @Synchronized
-    fun issueOffer(controllerId: String, sessionId: String): MediaAttachOffer? {
+    override fun issueOffer(controllerId: String, sessionId: String): MediaAttachOffer? {
         require(controllerId.isNotEmpty())
         require(sessionId.isNotEmpty())
         if (pending != null || attachedSessionId != null) return null
@@ -56,12 +53,12 @@ class MediaSessionCoordinator(
     }
 
     @Synchronized
-    fun attach(
+    override fun attach(
         controllerId: String,
         sessionId: String,
         tokenHex: String,
         output: OutputStream,
-        closeTransport: () -> Unit = { output.close() },
+        closeTransport: () -> Unit,
     ): MediaAttachment? {
         val expected = pending ?: return null
         val supplied = runCatching { Hex.decode(tokenHex, 32) }.getOrNull() ?: return null
@@ -132,7 +129,7 @@ class MediaSessionCoordinator(
     }
 
     @Synchronized
-    fun stopSession(sessionId: String) {
+    override fun stopSession(sessionId: String) {
         if (pending?.sessionId != sessionId && attachedSessionId != sessionId) return
         val detached = detachLocked()
         onState("media_idle")
@@ -148,7 +145,7 @@ class MediaSessionCoordinator(
     fun currentAttachmentId(): Long? = attachmentId
 
     @Synchronized
-    fun stopAttachment(expectedAttachmentId: Long) {
+    override fun stopAttachment(expectedAttachmentId: Long) {
         if (attachmentId != expectedAttachmentId) return
         val detached = detachLocked()
         onState("media_idle")
