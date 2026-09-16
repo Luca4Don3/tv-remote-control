@@ -1,4 +1,167 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">TV 遥控</string>
+    <string name="app_name">TV Remote</string>
+
+    <!-- common -->
+    <string name="action_back">Back</string>
+    <string name="action_dismiss">Got it</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_save">Save</string>
+    <string name="action_connect">Connect</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_change_address">Change address</string>
+    <string name="dialog_change_address_title">Change TV address</string>
+    <string name="dialog_change_address_hint">Connect to this address using the saved credential (certificate is still verified).</string>
+    <string name="action_forget">Forget</string>
+    <string name="action_pair">Pair</string>
+    <string name="action_retry">Retry</string>
+
+    <!-- devices -->
+    <string name="screen_devices_title">TV Remote</string>
+    <string name="screen_devices_subtitle">One TV at a time</string>
+    <string name="action_add_device">Add device</string>
+    <string name="action_settings">Settings</string>
+    <string name="devices_empty">No paired TVs yet.\nTap “Add device” to scan or pair manually.</string>
+    <string name="device_current">Current</string>
+    <string name="device_tv_name">TV name: %1$s</string>
+    <string name="device_last_endpoint">Last address: %1$s</string>
+    <string name="device_last_used">Last used: %1$s</string>
+    <string name="device_status">Status: %1$s</string>
+    <string name="status_paired">Paired</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_authenticating">Authenticating…</string>
+    <string name="status_disconnecting">Disconnecting…</string>
+    <string name="status_failed">Connection failed</string>
+    <string name="status_not_connected">Not connected</string>
+    <string name="last_used_never">Never used</string>
+    <string name="dialog_rename_title">Rename device</string>
+    <string name="field_device_name">Device name</string>
+    <string name="dialog_forget_title">Forget device</string>
+    <string name="dialog_forget_message">This deletes the “%1$s” credential on this phone. You can still revoke it on the TV.</string>
+
+    <!-- add device -->
+    <string name="screen_add_device">Add device</string>
+    <string name="section_scan">Scan QR code</string>
+    <string name="scan_description">Point at the pairing QR on the TV (one-time token). Camera permission is requested only while scanning.</string>
+    <string name="action_open_scanner">Open scanner</string>
+    <string name="action_pick_image">Choose from photos</string>
+    <string name="scanner_aim">Point at the pairing QR on the TV</string>
+    <string name="scanner_invalid">The QR code is not a valid pairing invitation (tvrc://pair only).</string>
+    <string name="camera_denied">Camera permission not granted. You can still use LAN search or manual IP pairing.</string>
+    <string name="camera_unavailable">Camera unavailable: %1$s</string>
+    <string name="section_lan_search">LAN search</string>
+    <string name="discovery_idle">Search uses the existing UDP discovery. Not finding a TV does not mean it is offline.</string>
+    <string name="action_search_again">Search again</string>
+    <string name="discovered_unpaired">%1$s:%2$d (unpaired)</string>
+    <string name="section_manual">Manual connection</string>
+    <string name="field_tv_host">TV IP or hostname</string>
+    <string name="field_port">Port (default %1$d)</string>
+    <string name="action_pair_with_code">Pair with 6-digit code</string>
+
+    <!-- pairing -->
+    <string name="screen_pairing">Pair with TV</string>
+    <string name="pairing_input_hint">Enable pairing on the TV, then enter the 6-digit code shown.</string>
+    <string name="field_pairing_code">6-digit pairing code</string>
+    <string name="action_connect_pair">Connect and pair</string>
+    <string name="pairing_qr_started">QR read. Starting pairing…</string>
+    <string name="pairing_sas_prompt">Verify the security code (SAS) on the TV:</string>
+    <string name="pairing_sas_hint">Pairing continues after you confirm on the TV. If it does not match, cancel and check the network.</string>
+    <string name="action_cancel_pairing">Cancel pairing</string>
+    <string name="pairing_completing">Saving credential and finishing pairing…</string>
+    <string name="pairing_finished">Pairing flow ended</string>
+
+    <!-- remote -->
+    <string name="screen_remote">Remote</string>
+    <string name="action_disconnect">Disconnect</string>
+    <string name="key_back">Back</string>
+    <string name="key_home">Home</string>
+    <string name="key_menu">Menu</string>
+    <string name="key_volume_up">Vol+</string>
+    <string name="key_volume_mute">Mute</string>
+    <string name="key_volume_down">Vol-</string>
+    <string name="key_play_pause">Play/Pause</string>
+    <string name="key_stop">Stop</string>
+    <string name="key_prev">Prev</string>
+    <string name="key_next">Next</string>
+    <string name="key_ok">OK</string>
+    <string name="legend_best_effort">Keys marked * are best-effort and may fail depending on the TV screen.</string>
+    <string name="legend_permission">Greyed-out keys need a TV-side setting first.</string>
+    <string name="legend_unverified">Unverified keys are never shown as supported.</string>
+    <string name="remote_connecting">Connecting and authenticating…</string>
+    <string name="remote_connection_failed">Connection failed</string>
+    <string name="remote_unknown_error">Unknown error</string>
+    <string name="remote_choose_other">Choose another device</string>
+    <string name="remote_not_connected">Not connected</string>
+    <string name="section_text_input">Text input</string>
+    <string name="text_field_hint">Type text, then tap Send</string>
+    <string name="action_send">Send</string>
+    <string name="action_refresh_tv">Refresh TV status</string>
+    <string name="text_sent">Sent</string>
+    <string name="text_failed">Send failed: your draft is kept in the box; retry when ready.</string>
+    <string name="text_permission">On the TV, focus a text field and enable the input method, then tap Refresh TV status.</string>
+    <string name="text_unverified">The TV did not report text input support. Tap Refresh TV status to retry.</string>
+    <string name="text_unsupported">This TV does not support text input.</string>
+    <string name="subtitle_connected">Connected%1$s</string>
+    <string name="subtitle_connecting">Connecting%1$s</string>
+    <string name="subtitle_authenticating">Authenticating%1$s</string>
+    <string name="subtitle_disconnecting">Disconnecting</string>
+    <string name="subtitle_failed">Connection failed</string>
+    <string name="subtitle_idle">Not connected</string>
+    <string name="endpoint_suffix"> (%1$s)</string>
+    <string name="endpoint_unknown">unknown address</string>
+
+    <!-- settings -->
+    <string name="screen_settings">Settings</string>
+    <string name="settings_app_info">App info</string>
+    <string name="settings_version">Version: %1$s</string>
+    <string name="settings_controller_name">Controller name: %1$s</string>
+    <string name="settings_paired_count">Paired devices: %1$d</string>
+    <string name="settings_connection">Connection</string>
+    <string name="settings_current_device">Current device: %1$s (%2$s)</string>
+    <string name="action_disconnect_current">Disconnect current</string>
+    <string name="settings_diagnostics">Diagnostics</string>
+    <string name="settings_privacy">This app connects to the TV only over the local network using the project\u2019s existing discovery and TLS protocol. No accounts, cloud, Google services, or accessibility.</string>
+    <string name="settings_debug">Debug info (debug build only)</string>
+    <string name="settings_app_id">App ID: %1$s</string>
+    <string name="settings_connection_state">Connection: %1$s</string>
+    <string name="settings_discovered_count">Discovered devices: %1$d</string>
+
+    <!-- view model messages -->
+    <string name="vm_searching">Searching for TVs…</string>
+    <string name="vm_discovery_none">No TV found. You can enter the IP manually or use QR pairing. Not finding a TV does not mean it is offline.</string>
+    <string name="vm_discovery_found">Found %1$d TV(s). Select one, then enter the 6-digit code.</string>
+    <string name="vm_paired_success">Paired successfully</string>
+    <string name="vm_device_not_found">Saved device not found. Please pair again.</string>
+    <string name="vm_no_endpoint">This device has no usable address. Please pair again on the TV.</string>
+    <string name="vm_invalid_port">Port must be between 1 and 65535</string>
+    <string name="vm_cert_changed">TV certificate changed; connection stopped. Please pair again.</string>
+    <string name="vm_credential_revoked">The TV revoked this credential. Please pair again.</string>
+    <string name="vm_identity_mismatch">TV identity/certificate mismatch; please pair again</string>
+    <string name="vm_tv_busy">The TV is being controlled by another device. Try again later</string>
+    <string name="vm_connection_closed">Connection closed</string>
+    <string name="vm_timeout">Connection timed out. Make sure the phone and TV are on the same LAN.</string>
+    <string name="vm_connect_failed">Cannot connect to the TV. Check the network and the TV service.</string>
+    <string name="vm_dns_failed">Cannot resolve the TV address.</string>
+    <string name="vm_pairing_rejected">Pairing rejected or expired. Try again.</string>
+    <string name="vm_tv_rejected">TV rejected: %1$s</string>
+    <string name="vm_protocol_error">Protocol error</string>
+    <string name="vm_unknown_error">Unknown error</string>
+    <string name="vm_rename_failed">Rename failed: %1$s</string>
+    <string name="vm_forget_failed">Forget failed: %1$s</string>
+    <string name="vm_credential_unavailable">Some saved credentials could not be read; please pair again</string>
+    <string name="vm_storage_error">storage error</string>
+    <string name="vm_text_too_long">Text exceeds %1$d characters; not sent.</string>
+    <string name="vm_text_sent">Text sent</string>
+    <string name="vm_text_label">Text</string>
+    <string name="vm_capabilities_refreshed">TV capabilities refreshed</string>
+    <string name="ack_success">TV accepted: %1$s</string>
+    <string name="ack_unsupported">%1$s is not supported</string>
+    <string name="ack_permission_denied">%1$s permission denied</string>
+    <string name="ack_mapping_missing">%1$s has no mapping</string>
+    <string name="ack_rejected">%1$s rejected</string>
+    <string name="ack_rejected_reason">%1$s rejected: %2$s</string>
+    <string name="ack_failed">%1$s failed</string>
+    <string name="ack_failed_reason">%1$s failed: %2$s</string>
+    <string name="ack_status">%1$s %2$s</string>
 </resources>

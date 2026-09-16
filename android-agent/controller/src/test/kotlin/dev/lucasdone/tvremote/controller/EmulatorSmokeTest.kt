@@ -12,6 +12,7 @@ import dev.lucasdone.tvremote.agent.protocol.requireObject
 import dev.lucasdone.tvremote.agent.protocol.requireString
 import dev.lucasdone.tvremote.controller.net.ConnectionTransport
 import dev.lucasdone.tvremote.controller.net.WsDebugClient
+import dev.lucasdone.tvremote.controller.session.ControllerSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -141,7 +142,7 @@ class EmulatorSmokeTest {
         trustContext.init(null, arrayOf<TrustManager>(TofuTrustManager()), SecureRandom())
         val paired = pairOnTls(trustContext)
 
-        val session = ControllerSession(connectionFactory = { freshConnection(trustContext) })
+        val session = ControllerSession(connectionFactory = { _ -> freshConnection(trustContext) })
         val capabilities = session.authenticate(paired.controllerId, paired.secret, paired.tvCertificateFingerprint)
         assertTrue(capabilities.keySupport.containsKey("DPAD_DOWN"))
 
@@ -162,7 +163,7 @@ class EmulatorSmokeTest {
         assertTrue(dpadAck.status in setOf("SUCCESS", "EXECUTION_FAILED"))
 
         // 阶段五：文本命令 ACK（无输入框场景允许 UNSUPPORTED/EXECUTION_FAILED）
-        val textAck = session.sendText("tvrc", draft = false)
+        val textAck = session.sendText("tvrc")
         assertTrue(textAck.status in setOf("SUCCESS", "UNSUPPORTED", "EXECUTION_FAILED"))
 
         session.close()
