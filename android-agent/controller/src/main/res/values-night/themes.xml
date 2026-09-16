@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色系统主题下的窗口背景，避免启动时白闪 -->
+    <style name="Theme.TvRemoteController" parent="android:Theme.Material.NoActionBar" />
+</resources>

@@ -4,6 +4,19 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- 相机仅在应用内扫码时按需申请；拒绝后仍可用搜索/手动/六位码配对 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- 无相机/仅前摄设备也可安装：显式声明相机特性非必需（CAMERA 权限会隐含 camera 必需） -->
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
 
     <application
         android:allowBackup="false"

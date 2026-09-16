@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TV 遥控</string>
+
+    <!-- common -->
+    <string name="action_back">返回</string>
+    <string name="action_dismiss">知道了</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_save">保存</string>
+    <string name="action_connect">连接</string>
+    <string name="action_rename">改名</string>
+    <string name="action_change_address">更改地址</string>
+    <string name="dialog_change_address_title">更改电视地址</string>
+    <string name="dialog_change_address_hint">使用已保存凭据连接该地址（仍会校验证书）。</string>
+    <string name="action_forget">忘记</string>
+    <string name="action_pair">配对</string>
+    <string name="action_retry">重试</string>
+
+    <!-- devices -->
+    <string name="screen_devices_title">TV 遥控</string>
+    <string name="screen_devices_subtitle">一次只控制一台电视</string>
+    <string name="action_add_device">添加设备</string>
+    <string name="action_settings">设置</string>
+    <string name="devices_empty">还没有已配对的电视。\n点击“添加设备”扫码或手动配对。</string>
+    <string name="device_current">当前</string>
+    <string name="device_tv_name">电视名称：%1$s</string>
+    <string name="device_last_endpoint">最近地址：%1$s</string>
+    <string name="device_last_used">最近使用：%1$s</string>
+    <string name="device_status">状态：%1$s</string>
+    <string name="status_paired">已配对</string>
+    <string name="status_connected">已连接</string>
+    <string name="status_connecting">连接中…</string>
+    <string name="status_authenticating">认证中…</string>
+    <string name="status_disconnecting">正在断开…</string>
+    <string name="status_failed">连接失败</string>
+    <string name="status_not_connected">未连接</string>
+    <string name="last_used_never">从未使用</string>
+    <string name="dialog_rename_title">设备改名</string>
+    <string name="field_device_name">设备名称</string>
+    <string name="dialog_forget_title">忘记设备</string>
+    <string name="dialog_forget_message">将删除本机保存的“%1$s”凭据。电视端仍可在电视上撤销该控制端。</string>
+
+    <!-- add device -->
+    <string name="screen_add_device">添加设备</string>
+    <string name="section_scan">扫码配对</string>
+    <string name="scan_description">对准电视上的配对二维码（一次性 token）。相机权限仅在扫码时申请。</string>
+    <string name="action_open_scanner">打开扫码</string>
+    <string name="action_pick_image">从相册选择</string>
+    <string name="scanner_aim">对准电视上的配对二维码</string>
+    <string name="scanner_invalid">二维码不是有效的配对邀请（仅支持 tvrc://pair）。</string>
+    <string name="camera_denied">未授予相机权限。仍可使用局域网搜索或手动输入 IP 配对。</string>
+    <string name="camera_unavailable">相机不可用：%1$s</string>
+    <string name="section_lan_search">局域网搜索</string>
+    <string name="discovery_idle">搜索使用现有 UDP 发现；未发现不代表设备离线。</string>
+    <string name="action_search_again">重新搜索</string>
+    <string name="discovered_unpaired">%1$s:%2$d（未配对）</string>
+    <string name="section_manual">手动连接</string>
+    <string name="field_tv_host">电视 IP 或主机名</string>
+    <string name="field_port">端口（默认 %1$d）</string>
+    <string name="action_pair_with_code">使用六位码配对</string>
+
+    <!-- pairing -->
+    <string name="screen_pairing">配对电视机</string>
+    <string name="pairing_input_hint">在电视上开启配对，输入电视显示的六位配对码。</string>
+    <string name="field_pairing_code">六位配对码</string>
+    <string name="action_connect_pair">连接并配对</string>
+    <string name="pairing_qr_started">已读取二维码，正在向电视发起配对…</string>
+    <string name="pairing_sas_prompt">请在电视上核对安全码（SAS）并确认：</string>
+    <string name="pairing_sas_hint">电视端确认后会自动继续。若不一致，请立即取消并检查网络。</string>
+    <string name="action_cancel_pairing">取消配对</string>
+    <string name="pairing_completing">正在保存凭据并完成配对…</string>
+    <string name="pairing_finished">配对流程已结束</string>
+
+    <!-- remote -->
+    <string name="screen_remote">遥控</string>
+    <string name="action_disconnect">断开连接</string>
+    <string name="key_back">返回</string>
+    <string name="key_home">主页</string>
+    <string name="key_menu">菜单</string>
+    <string name="key_volume_up">音量+</string>
+    <string name="key_volume_mute">静音</string>
+    <string name="key_volume_down">音量-</string>
+    <string name="key_play_pause">播放/暂停</string>
+    <string name="key_stop">停止</string>
+    <string name="key_prev">上一项</string>
+    <string name="key_next">下一项</string>
+    <string name="key_ok">OK</string>
+    <string name="legend_best_effort">带 * 的按键为“尽力而为”，可能因电视当前界面而失败。</string>
+    <string name="legend_permission">灰显按键需先在电视端开启相应能力。</string>
+    <string name="legend_unverified">电视端未验证的按键不会显示为支持。</string>
+    <string name="remote_connecting">正在连接并认证…</string>
+    <string name="remote_connection_failed">连接失败</string>
+    <string name="remote_unknown_error">未知错误</string>
+    <string name="remote_choose_other">选择其他设备</string>
+    <string name="remote_not_connected">未连接</string>
+    <string name="section_text_input">文字输入</string>
+    <string name="text_field_hint">输入文字后点击发送</string>
+    <string name="action_send">发送</string>
+    <string name="action_refresh_tv">刷新电视状态</string>
+    <string name="text_sent">已发送</string>
+    <string name="text_failed">发送失败：草稿仍保留在输入框，可自行重试。</string>
+    <string name="text_permission">电视端需要先选中输入框并启用输入法。请在电视上点开一个可输入的位置后，点“刷新电视状态”重试。</string>
+    <string name="text_unverified">电视端未上报文字输入能力，暂不可用。可点“刷新电视状态”重试。</string>
+    <string name="text_unsupported">该电视当前不支持文字输入。</string>
+    <string name="subtitle_connected">已连接%1$s</string>
+    <string name="subtitle_connecting">连接中%1$s</string>
+    <string name="subtitle_authenticating">认证中%1$s</string>
+    <string name="subtitle_disconnecting">正在断开</string>
+    <string name="subtitle_failed">连接失败</string>
+    <string name="subtitle_idle">未连接</string>
+    <string name="endpoint_suffix">（%1$s）</string>
+    <string name="endpoint_unknown">未知地址</string>
+
+    <!-- settings -->
+    <string name="screen_settings">设置</string>
+    <string name="settings_app_info">应用信息</string>
+    <string name="settings_version">版本：%1$s</string>
+    <string name="settings_controller_name">控制端名称：%1$s</string>
+    <string name="settings_paired_count">已配对设备：%1$d 台</string>
+    <string name="settings_connection">连接管理</string>
+    <string name="settings_current_device">当前设备：%1$s（%2$s）</string>
+    <string name="action_disconnect_current">断开当前连接</string>
+    <string name="settings_diagnostics">诊断说明</string>
+    <string name="settings_privacy">本应用仅在局域网内通过仓库既有发现与 TLS 协议连接电视端，不使用账号、云服务、Google 服务或无障碍。</string>
+    <string name="settings_debug">调试信息（仅 Debug）</string>
+    <string name="settings_app_id">应用标识：%1$s</string>
+    <string name="settings_connection_state">连接状态：%1$s</string>
+    <string name="settings_discovered_count">已发现设备：%1$d 台</string>
+
+    <!-- view model messages -->
+    <string name="vm_searching">正在搜索电视…</string>
+    <string name="vm_discovery_none">未发现电视。可手动输入 IP，或使用扫码配对。未发现不代表设备离线。</string>
+    <string name="vm_discovery_found">发现 %1$d 台电视，选择后输入六位配对码。</string>
+    <string name="vm_paired_success">配对成功</string>
+    <string name="vm_device_not_found">找不到已保存的设备，请重新配对</string>
+    <string name="vm_no_endpoint">该设备没有可用地址，请在电视端重新配对</string>
+    <string name="vm_invalid_port">端口需在 1–65535 之间</string>
+    <string name="vm_cert_changed">电视证书已变化，已停止连接并需重新配对</string>
+    <string name="vm_credential_revoked">电视端已撤销该凭据，请重新配对</string>
+    <string name="vm_identity_mismatch">电视身份/证书不匹配，请重新配对</string>
+    <string name="vm_tv_busy">电视正被另一台设备控制，请稍后重试</string>
+    <string name="vm_connection_closed">连接已断开</string>
+    <string name="vm_timeout">连接超时，请确认手机与电视在同一局域网</string>
+    <string name="vm_connect_failed">无法连接电视，请检查网络与电视端服务</string>
+    <string name="vm_dns_failed">无法解析电视地址</string>
+    <string name="vm_pairing_rejected">配对被拒绝或已过期，请重试</string>
+    <string name="vm_tv_rejected">电视端拒绝：%1$s</string>
+    <string name="vm_protocol_error">协议错误</string>
+    <string name="vm_unknown_error">未知错误</string>
+    <string name="vm_rename_failed">改名失败：%1$s</string>
+    <string name="vm_forget_failed">忘记设备失败：%1$s</string>
+    <string name="vm_credential_unavailable">部分已保存凭据无法读取，请重新配对</string>
+    <string name="vm_storage_error">存储错误</string>
+    <string name="vm_text_too_long">文字超过 %1$d 字符上限，未发送</string>
+    <string name="vm_text_sent">文字已发送</string>
+    <string name="vm_text_label">文字</string>
+    <string name="vm_capabilities_refreshed">已刷新电视能力</string>
+    <string name="ack_success">电视已接受：%1$s</string>
+    <string name="ack_unsupported">%1$s 不受支持</string>
+    <string name="ack_permission_denied">%1$s 权限不足</string>
+    <string name="ack_mapping_missing">%1$s 缺少映射</string>
+    <string name="ack_rejected">%1$s 被拒绝</string>
+    <string name="ack_rejected_reason">%1$s 被拒绝：%2$s</string>
+    <string name="ack_failed">%1$s 执行失败</string>
+    <string name="ack_failed_reason">%1$s 执行失败：%2$s</string>
+    <string name="ack_status">%1$s %2$s</string>
+</resources>
