@@ -221,6 +221,7 @@ class ControllerSessionTest {
                     override fun find(id: String): StoredDevice? = null
                     override fun save(device: StoredDevice) = Unit
                     override fun savePending(device: StoredDevice) = throw CredentialStoreException("disk full")
+                    override fun markPendingAckAttempted(id: String) = Unit
                     override fun promotePending(id: String) = Unit
                     override fun discardPending(id: String) = Unit
                     override fun rename(id: String, newName: String) = Unit
@@ -374,6 +375,7 @@ class ControllerSessionTest {
         override fun savePending(device: StoredDevice) {
             saved += device
         }
+        override fun markPendingAckAttempted(id: String) = Unit
         override fun promotePending(id: String) = Unit
         override fun discardPending(id: String) = Unit
         override fun rename(id: String, newName: String) = Unit

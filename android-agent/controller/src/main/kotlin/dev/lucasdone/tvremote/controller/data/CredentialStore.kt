@@ -35,6 +35,8 @@ data class StoredDevice(
 data class DeviceLoad(
     val devices: List<StoredDevice>,
     val unreadableIds: List<String> = emptyList(),
+    /** 已尝试发送 pair_store_ack 的待确认凭据：需通过认证确认后才能提升为有效。 */
+    val pending: List<StoredDevice> = emptyList(),
 )
 
 /** 凭据存储失败：必须显式抛出，禁止静默丢弃（凭据未落盘不得发 pair_store_ack）。 */
@@ -54,10 +56,16 @@ interface CredentialStore {
     fun save(device: StoredDevice)
 
     /**
-     * 持久化为「待完成配对」记录，**不覆盖**同指纹的有效记录。
+     * 持久化为「待完成配对」记录（`ackAttempted=false`），**不覆盖**同指纹的有效记录。
      * 配对确认（`pair_complete`）后由 [promotePending] 切换为有效。
      */
     fun savePending(device: StoredDevice)
+
+    /**
+     * 在发送 `pair_store_ack` **之前**落盘「已尝试发送」。落盘失败必须抛错，
+     * 调用方据此放弃发送。此后任何失败都保留 pending（电视可能已激活）。
+     */
+    fun markPendingAckAttempted(id: String)
 
     fun promotePending(id: String)
 
