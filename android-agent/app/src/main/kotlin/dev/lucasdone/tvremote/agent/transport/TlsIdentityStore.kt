@@ -17,6 +17,7 @@ import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
+import java.security.PublicKey
 import java.security.SecureRandom
 import java.security.Signature
 import java.security.cert.X509Certificate
@@ -116,24 +117,12 @@ class TlsIdentityStore(context: Context) {
      * the original failure so the recovery policy can see a permanent invalidation through the cause.
      */
     private fun signingSelfTestError(entry: KeyStore.PrivateKeyEntry): Throwable? =
-        signatureRoundTrip(entry, "SHA256withRSA")
-            ?: if (tls13Available()) signatureRoundTrip(entry, "SHA256withRSA/PSS") else null
-
-    private fun signatureRoundTrip(entry: KeyStore.PrivateKeyEntry, algorithm: String): Throwable? = try {
-        val sample = ByteArray(32).also(SecureRandom()::nextBytes)
-        val signed = Signature.getInstance(algorithm).apply {
-            initSign(entry.privateKey)
-            update(sample)
-        }.sign()
-        Signature.getInstance(algorithm).run {
-            initVerify(entry.certificate)
-            update(sample)
-            verify(signed)
-        }
-        null
-    } catch (error: Exception) {
-        error
-    }
+        tlsSignatureRoundTripError(entry.privateKey, entry.certificate.publicKey, "SHA256withRSA")
+            ?: if (tls13Available()) {
+                tlsSignatureRoundTripError(entry.privateKey, entry.certificate.publicKey, "SHA256withRSA/PSS")
+            } else {
+                null
+            }
 
     private fun deleteEntry() {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
@@ -213,3 +202,31 @@ class TlsIdentityStore(context: Context) {
         private const val KEY_ALIAS = "tv_remote_tls_identity_v1"
     }
 }
+
+/**
+ * Signs a random sample with [privateKey] and verifies it with [publicKey]. Returns null on success,
+ * or the failure — including a signature that simply does not verify — so the caller can decide
+ * whether an identity is usable. Extracted from the store so it is testable without Android.
+ */
+internal fun tlsSignatureRoundTripError(
+    privateKey: PrivateKey,
+    publicKey: PublicKey,
+    algorithm: String,
+): Throwable? = try {
+    val sample = ByteArray(32).also(SecureRandom()::nextBytes)
+    val signed = Signature.getInstance(algorithm).apply {
+        initSign(privateKey)
+        update(sample)
+    }.sign()
+    val verified = Signature.getInstance(algorithm).run {
+        initVerify(publicKey)
+        update(sample)
+        verify(signed)
+    }
+    if (verified) null else SignatureVerificationFailedException()
+} catch (error: Exception) {
+    error
+}
+
+/** Returned as a value when a signature does not verify against the certificate public key. */
+internal class SignatureVerificationFailedException : IllegalStateException("TLS signature did not verify")
