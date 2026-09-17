@@ -79,7 +79,8 @@ class KeystoreCredentialStore(context: Context) {
     }
 
     private val recovery = KeystoreRecovery(
-        keyUsable = { probeWrappingKey() || probeWrappingKey() },
+        existingKeyUsable = { wrappingKeyRoundTrip() },
+        controlKeyUsable = { controlKeyRoundTrip() },
         deleteKey = {
             Log.w(TAG, "Rebuilding unusable pairing key")
             deleteWrappingKey()
@@ -92,9 +93,9 @@ class KeystoreCredentialStore(context: Context) {
     )
 
     /**
-     * Decrypts a stored secret. A key-level failure is only repaired after [probeWrappingKey]
-     * confirms the wrapping key is unusable; otherwise data is preserved and the error is rethrown.
-     * A corrupt envelope drops only that record so healthy pairings survive.
+     * Decrypts a stored secret. A key-level failure is only repaired after [wrappingKeyRoundTrip]
+     * fails while a fresh control key works, proving the environment is healthy; otherwise data is
+     * preserved and the error is rethrown. A corrupt envelope drops only that record.
      */
     private fun readSecret(controllerId: String): ByteArray? = recovery.run(controllerId) {
         // Re-read each attempt: after a key repair clears the records, the retry must observe that the
@@ -102,13 +103,37 @@ class KeystoreCredentialStore(context: Context) {
         preferences.getString(secretKey(controllerId), null)?.let { decryptWith(getOrCreateKeyPair(), it) }
     }
 
-    /** Non-destructive round trip proving the wrapping key can still be used for both directions. */
-    private fun probeWrappingKey(): Boolean = try {
+    /** Non-destructive round trip proving the existing wrapping key can still encrypt and decrypt. */
+    private fun wrappingKeyRoundTrip(): Boolean = try {
         val key = getOrCreateKeyPair()
         val sample = ByteArray(32).also(SecureRandom()::nextBytes)
         MessageDigest.isEqual(sample, decryptWith(key, encryptWith(key, sample)))
     } catch (_: Exception) {
         false
+    }
+
+    /**
+     * Proves the Keystore/provider can still generate and use an RSA key. Only when this succeeds
+     * while the existing key fails can the existing key be confirmed as the fault (not a temporary
+     * provider problem), so it is safe to rebuild it.
+     */
+    private fun controlKeyRoundTrip(): Boolean {
+        val store = try {
+            KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        } catch (_: Exception) {
+            return false
+        }
+        return try {
+            if (store.containsAlias(CONTROL_ALIAS)) store.deleteEntry(CONTROL_ALIAS)
+            generateKeyPair(CONTROL_ALIAS)
+            val entry = store.getEntry(CONTROL_ALIAS, null) as? KeyStore.PrivateKeyEntry ?: return false
+            val sample = ByteArray(32).also(SecureRandom()::nextBytes)
+            MessageDigest.isEqual(sample, decryptWith(entry, encryptWith(entry, sample)))
+        } catch (_: Exception) {
+            false
+        } finally {
+            runCatching { if (store.containsAlias(CONTROL_ALIAS)) store.deleteEntry(CONTROL_ALIAS) }
+        }
     }
 
     private fun removeCorruptRecord(controllerId: String) {
@@ -237,12 +262,16 @@ class KeystoreCredentialStore(context: Context) {
     private fun getOrCreateKeyPair(): KeyStore.PrivateKeyEntry {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         (keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry)?.let { return it }
+        generateKeyPair(KEY_ALIAS)
+        return keyStore.getEntry(KEY_ALIAS, null) as KeyStore.PrivateKeyEntry
+    }
 
+    private fun generateKeyPair(alias: String) {
         val generator = KeyPairGenerator.getInstance("RSA", ANDROID_KEYSTORE)
         if (Build.VERSION.SDK_INT >= 23) {
             generator.initialize(
                 KeyGenParameterSpec.Builder(
-                    KEY_ALIAS,
+                    alias,
                     KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
                 )
                     .setKeySize(2048)
@@ -257,7 +286,7 @@ class KeystoreCredentialStore(context: Context) {
             generator.initialize(
                 // 全限定名：仅旧 API 分支引用，避免 import 触发文件级弃用警告。
                 android.security.KeyPairGeneratorSpec.Builder(applicationContext)
-                    .setAlias(KEY_ALIAS)
+                    .setAlias(alias)
                     .setSubject(X500Principal("CN=TV Remote Agent"))
                     .setSerialNumber(BigInteger.ONE)
                     .setStartDate(start.time)
@@ -267,13 +296,13 @@ class KeystoreCredentialStore(context: Context) {
             )
         }
         generator.generateKeyPair()
-        return keyStore.getEntry(KEY_ALIAS, null) as KeyStore.PrivateKeyEntry
     }
 
     companion object {
         private const val TAG = "TvrcCredentials"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "tv_remote_controller_wrap_key"
+        private const val CONTROL_ALIAS = "tv_remote_controller_wrap_key.control"
         private const val RSA_OAEP_TRANSFORMATION = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
         private const val RSA_PKCS1_TRANSFORMATION = "RSA/ECB/PKCS1Padding"
         private const val MAX_CONTROLLERS = 8

@@ -31,7 +31,8 @@ import javax.security.auth.x500.X500Principal
 class AdbIdentityStore(private val context: Context) {
     private val prefs = context.getSharedPreferences("xiaomi_adb_identity", Context.MODE_PRIVATE)
     private val recovery = KeystoreRecovery(
-        keyUsable = { probeWrappingKey() || probeWrappingKey() },
+        existingKeyUsable = { wrappingKeyRoundTrip() },
+        controlKeyUsable = { controlKeyRoundTrip() },
         deleteKey = {
             Log.w(TAG, "Rebuilding unusable ADB wrapping key")
             deleteWrappingKey()
@@ -72,18 +73,45 @@ class AdbIdentityStore(private val context: Context) {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         if (store.containsAlias(ALIAS)) store.deleteEntry(ALIAS)
     }
-    /** Non-destructive RSA wrap/unwrap round trip proving the alias can still be used. */
-    private fun probeWrappingKey(): Boolean = try {
+    /** Non-destructive RSA wrap/unwrap round trip proving the existing alias can still be used. */
+    private fun wrappingKeyRoundTrip(): Boolean = try {
         val key = wrappingKey()
+        rsaRoundTrip(key)
+    } catch (_: Exception) {
+        false
+    }
+
+    /**
+     * Proves the Keystore/provider can still generate and use an RSA key. Only when this succeeds
+     * while the existing alias fails can the alias be confirmed as the fault (not a temporary
+     * provider problem), so it is safe to rebuild it.
+     */
+    private fun controlKeyRoundTrip(): Boolean {
+        val store = try {
+            KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        } catch (_: Exception) {
+            return false
+        }
+        return try {
+            if (store.containsAlias(CONTROL_ALIAS)) store.deleteEntry(CONTROL_ALIAS)
+            generateWrappingKey(CONTROL_ALIAS)
+            val key = store.getEntry(CONTROL_ALIAS, null) as? KeyStore.PrivateKeyEntry ?: return false
+            rsaRoundTrip(key)
+        } catch (_: Exception) {
+            false
+        } finally {
+            runCatching { if (store.containsAlias(CONTROL_ALIAS)) store.deleteEntry(CONTROL_ALIAS) }
+        }
+    }
+
+    private fun rsaRoundTrip(key: KeyStore.PrivateKeyEntry): Boolean {
         val sample = ByteArray(32).also(SecureRandom()::nextBytes)
         val wrap = Cipher.getInstance(transformation())
         wrap.init(Cipher.ENCRYPT_MODE, key.certificate.publicKey)
         val wrapped = wrap.doFinal(sample)
         val unwrap = Cipher.getInstance(transformation())
         unwrap.init(Cipher.DECRYPT_MODE, key.privateKey)
-        MessageDigest.isEqual(sample, unwrap.doFinal(wrapped))
-    } catch (_: Exception) {
-        false
+        return MessageDigest.isEqual(sample, unwrap.doFinal(wrapped))
     }
     private fun encrypt(bytes: ByteArray): String {
         val aes = ByteArray(32).also(SecureRandom()::nextBytes)
@@ -122,9 +150,13 @@ class AdbIdentityStore(private val context: Context) {
     private fun wrappingKey(): KeyStore.PrivateKeyEntry {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getEntry(ALIAS, null) as? KeyStore.PrivateKeyEntry)?.let { return it }
+        generateWrappingKey(ALIAS)
+        return store.getEntry(ALIAS, null) as KeyStore.PrivateKeyEntry
+    }
+    private fun generateWrappingKey(alias: String) {
         val generator = KeyPairGenerator.getInstance("RSA", "AndroidKeyStore")
         if (Build.VERSION.SDK_INT >= 23) {
-            generator.initialize(KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            generator.initialize(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setKeySize(2048).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
                 .setDigests(KeyProperties.DIGEST_SHA1, KeyProperties.DIGEST_SHA256).build())
         } else {
@@ -132,15 +164,15 @@ class AdbIdentityStore(private val context: Context) {
             val end = Calendar.getInstance().apply { add(Calendar.YEAR, 25) }
             @Suppress("DEPRECATION")
             generator.initialize(android.security.KeyPairGeneratorSpec.Builder(context)
-                .setAlias(ALIAS).setSubject(X500Principal("CN=TV Remote Local ADB"))
+                .setAlias(alias).setSubject(X500Principal("CN=TV Remote Local ADB"))
                 .setSerialNumber(BigInteger.ONE).setStartDate(start.time).setEndDate(end.time).setKeySize(2048).build())
         }
         generator.generateKeyPair()
-        return store.getEntry(ALIAS, null) as KeyStore.PrivateKeyEntry
     }
     companion object {
         private const val TAG = "TvrcAdbIdentity"
         private const val RECORD_ID = "identity"
         private const val ALIAS = "xiaomi_local_adb_wrap_v1"
+        private const val CONTROL_ALIAS = "xiaomi_local_adb_wrap_v1.control"
     }
 }

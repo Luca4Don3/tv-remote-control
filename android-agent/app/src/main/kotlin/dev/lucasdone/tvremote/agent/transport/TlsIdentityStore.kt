@@ -41,7 +41,7 @@ class TlsIdentityStore(context: Context) {
             // Missing or unusable identity: recreate it. This changes the certificate fingerprint, so
             // controllers must pair again (surfaced to the user as a re-pair requirement).
             deleteEntry()
-            generateIdentity()
+            generateKeyPair(KEY_ALIAS)
             entry = loadUsableEntry() ?: throw IllegalStateException("Android Keystore did not retain TLS identity")
         }
         val certificate = entry.certificate as X509Certificate
@@ -55,21 +55,51 @@ class TlsIdentityStore(context: Context) {
 
     /**
      * Returns a usable entry, or null when the alias is missing or its key is confirmed unusable by a
-     * signing self-test. Transient or unexpected Keystore errors propagate so data is not discarded.
+     * signing self-test. A failed identity is only rebuilt when a fresh control key can sign, proving
+     * the Keystore environment is healthy; a temporary signing fault keeps the identity and throws.
      */
     private fun loadUsableEntry(): KeyStore.PrivateKeyEntry? {
         val entry = try {
             loadEntry()
         } catch (error: Exception) {
             if (classifyKeystoreFailure(error) != KeystoreFailureAction.KEY_REPAIR) throw error
+            if (!controlSigningWorks()) {
+                Log.w(TAG, "TLS identity load failed and the environment cannot sign; keeping it")
+                throw error
+            }
             Log.w(TAG, "Recreating unusable TLS identity: ${error.javaClass.simpleName}")
             return null
         } ?: return null
         if (!signingRoundTripSucceeds(entry)) {
+            if (!controlSigningWorks()) {
+                throw IllegalStateException("TLS identity failed its self-test and the environment cannot sign")
+            }
             Log.w(TAG, "Recreating TLS identity that failed its signing self-test")
             return null
         }
         return entry
+    }
+
+    /**
+     * Generates a throwaway key and signs with it, proving the Keystore/provider is healthy. Only then
+     * can a failing identity be blamed on the key itself rather than a temporary fault.
+     */
+    private fun controlSigningWorks(): Boolean {
+        val keyStore = try {
+            KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        } catch (_: Exception) {
+            return false
+        }
+        return try {
+            if (keyStore.containsAlias(CONTROL_ALIAS)) keyStore.deleteEntry(CONTROL_ALIAS)
+            generateKeyPair(CONTROL_ALIAS)
+            val entry = keyStore.getEntry(CONTROL_ALIAS, null) as? KeyStore.PrivateKeyEntry ?: return false
+            signingRoundTripSucceeds(entry)
+        } catch (_: Exception) {
+            false
+        } finally {
+            runCatching { if (keyStore.containsAlias(CONTROL_ALIAS)) keyStore.deleteEntry(CONTROL_ALIAS) }
+        }
     }
 
     /**
@@ -116,7 +146,7 @@ class TlsIdentityStore(context: Context) {
         return keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry
     }
 
-    private fun generateIdentity() {
+    private fun generateKeyPair(alias: String) {
         val generator = KeyPairGenerator.getInstance("RSA", ANDROID_KEYSTORE)
         val start = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
         val end = Calendar.getInstance().apply { add(Calendar.YEAR, 25) }
@@ -125,7 +155,7 @@ class TlsIdentityStore(context: Context) {
         if (Build.VERSION.SDK_INT >= 23) {
             generator.initialize(
                 KeyGenParameterSpec.Builder(
-                    KEY_ALIAS,
+                    alias,
                     KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
                 )
                     .setKeySize(2048)
@@ -144,7 +174,7 @@ class TlsIdentityStore(context: Context) {
         } else {
             generator.initialize(
                 KeyPairGeneratorSpec.Builder(applicationContext)
-                    .setAlias(KEY_ALIAS)
+                    .setAlias(alias)
                     .setSubject(subject)
                     .setSerialNumber(serial)
                     .setStartDate(start.time)
@@ -187,5 +217,6 @@ class TlsIdentityStore(context: Context) {
         private const val TAG = "TvrcTlsIdentity"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "tv_remote_tls_identity_v1"
+        private const val CONTROL_ALIAS = "tv_remote_tls_identity_v1.control"
     }
 }

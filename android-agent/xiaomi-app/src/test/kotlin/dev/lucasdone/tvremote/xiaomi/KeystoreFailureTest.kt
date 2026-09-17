@@ -14,13 +14,14 @@ import javax.crypto.AEADBadTagException
 import javax.crypto.BadPaddingException
 
 class KeystoreFailureTest {
-    private class FakeStore(var keyUsable: Boolean = false) {
+    private class FakeStore(var existingUsable: Boolean = false, var controlUsable: Boolean = true) {
         val records = linkedMapOf("healthy" to "secret-a", "corrupt" to "secret-b")
         val events = mutableListOf<String>()
         var deleteFails = false
 
         val recovery = KeystoreRecovery(
-            keyUsable = { events += "probe"; keyUsable },
+            existingKeyUsable = { events += "existing"; existingUsable },
+            controlKeyUsable = { events += "control"; controlUsable },
             deleteKey = {
                 events += "deleteKey"
                 if (deleteFails) throw IllegalStateException("delete failed")
@@ -47,19 +48,33 @@ class KeystoreFailureTest {
     }
 
     @Test fun usableKeyFailurePreservesDataAndRethrows() {
-        val store = FakeStore(keyUsable = true)
+        val store = FakeStore(existingUsable = true)
         try {
             store.recovery.run("corrupt") { throw InvalidKeyException("temporary provider failure") }
             fail("expected the original failure to propagate")
         } catch (error: InvalidKeyException) {
             assertEquals("temporary provider failure", error.message)
         }
-        assertEquals(listOf("probe"), store.events)
+        assertEquals(listOf("existing"), store.events)
+        assertEquals(mapOf("healthy" to "secret-a", "corrupt" to "secret-b"), store.records)
+    }
+
+    @Test fun unconfirmedKeyFailurePreservesDataAndRethrows() {
+        // Existing key fails AND the environment cannot sign a control key: a transient fault could be
+        // the cause, so nothing may be deleted.
+        val store = FakeStore(existingUsable = false, controlUsable = false)
+        try {
+            store.recovery.run("corrupt") { throw InvalidKeyException("digest not authorized") }
+            fail("expected the original failure to propagate")
+        } catch (error: InvalidKeyException) {
+            assertEquals("digest not authorized", error.message)
+        }
+        assertEquals(listOf("existing", "control"), store.events)
         assertEquals(mapOf("healthy" to "secret-a", "corrupt" to "secret-b"), store.records)
     }
 
     @Test fun confirmedUnusableKeyRepairsThenRetries() {
-        val store = FakeStore(keyUsable = false)
+        val store = FakeStore(existingUsable = false, controlUsable = true)
         var attempts = 0
         val result = store.recovery.run("corrupt") {
             attempts += 1
@@ -67,19 +82,19 @@ class KeystoreFailureTest {
             "recovered"
         }
         assertEquals("recovered", result)
-        assertEquals(listOf("probe", "deleteKey", "clearRecords"), store.events)
+        assertEquals(listOf("existing", "control", "deleteKey", "clearRecords"), store.events)
         assertTrue(store.records.isEmpty())
     }
 
     @Test fun deleteKeyFailurePropagatesBeforeRecordsAreCleared() {
-        val store = FakeStore(keyUsable = false).apply { deleteFails = true }
+        val store = FakeStore(existingUsable = false, controlUsable = true).apply { deleteFails = true }
         try {
             store.recovery.run("corrupt") { throw InvalidKeyException("digest not authorized") }
             fail("expected the delete failure to propagate")
         } catch (error: IllegalStateException) {
             assertEquals("delete failed", error.message)
         }
-        assertEquals(listOf("probe", "deleteKey"), store.events)
+        assertEquals(listOf("existing", "control", "deleteKey"), store.events)
         assertEquals(mapOf("healthy" to "secret-a", "corrupt" to "secret-b"), store.records)
     }
 
@@ -103,7 +118,7 @@ class KeystoreFailureTest {
     }
 
     @Test fun writePathRepairsPreexistingBadAliasWithoutRecord() {
-        val store = FakeStore(keyUsable = false)
+        val store = FakeStore(existingUsable = false, controlUsable = true)
         store.records.clear() // alias exists but no ciphertext has been stored yet
         var attempts = 0
         val written = store.recovery.run(null) {
@@ -112,7 +127,7 @@ class KeystoreFailureTest {
             "ciphertext"
         }
         assertEquals("ciphertext", written)
-        assertEquals(listOf("probe", "deleteKey", "clearRecords"), store.events)
+        assertEquals(listOf("existing", "control", "deleteKey", "clearRecords"), store.events)
     }
 
     @Test fun writePathRecordDropWithoutIdRethrows() {
@@ -129,7 +144,7 @@ class KeystoreFailureTest {
     @Test fun readPathReturnsNullWhenTheRetryFindsNoStoredRecord() {
         // Mirrors the credential store: after a repair clears the records, a re-read yields null
         // instead of the stale ciphertext, so the read path must surface null rather than throw.
-        val store = FakeStore(keyUsable = false)
+        val store = FakeStore(existingUsable = false, controlUsable = true)
         var attempts = 0
         val result = store.recovery.run("corrupt") {
             attempts += 1
@@ -138,6 +153,6 @@ class KeystoreFailureTest {
         }
         assertNull(result)
         assertEquals(2, attempts)
-        assertEquals(listOf("probe", "deleteKey", "clearRecords"), store.events)
+        assertEquals(listOf("existing", "control", "deleteKey", "clearRecords"), store.events)
     }
 }

@@ -3,12 +3,16 @@ package dev.lucasdone.tvremote.agent.auth
 /**
  * Confirm-before-repair policy for Keystore-wrapped data.
  *
- * A key-level failure only causes a rebuild after [keyUsable] proves the wrapping key cannot perform
- * a round trip; when the key still works the original error is rethrown so no data is discarded.
- * Record-level corruption drops only the affected record, and anything else propagates.
+ * A key-level failure only causes a rebuild when the existing key fails its self-test **and** a
+ * freshly generated control key works, proving the Keystore/provider is healthy and the old key is
+ * the fault. If the existing key works, or the control key also fails (a transient/provider fault we
+ * cannot attribute to the key), the original error is rethrown so no data is discarded.
+ *
+ * Record-level corruption drops only the affected record; anything else propagates.
  */
 internal class KeystoreRecovery(
-    private val keyUsable: () -> Boolean,
+    private val existingKeyUsable: () -> Boolean,
+    private val controlKeyUsable: () -> Boolean,
     private val deleteKey: () -> Unit,
     private val clearRecords: () -> Unit,
     private val removeRecord: (String) -> Unit,
@@ -22,7 +26,8 @@ internal class KeystoreRecovery(
     } catch (error: Exception) {
         when (classifyKeystoreFailure(error)) {
             KeystoreFailureAction.KEY_REPAIR -> {
-                if (keyUsable()) throw error
+                if (existingKeyUsable()) throw error
+                if (!controlKeyUsable()) throw error // environment unhealthy: cannot confirm the key is at fault
                 deleteKey() // propagates on failure, before any record is cleared
                 clearRecords()
                 operation()
