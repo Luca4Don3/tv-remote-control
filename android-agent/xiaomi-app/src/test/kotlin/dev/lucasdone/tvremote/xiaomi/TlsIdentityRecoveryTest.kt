@@ -8,17 +8,39 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
+private class PermanentMarker : Exception()
+
+private fun Throwable.isPermanent(): Boolean {
+    var current: Throwable? = this
+    var depth = 0
+    while (current != null && depth < 8) {
+        if (current is PermanentMarker) return true
+        current = current.cause
+        depth += 1
+    }
+    return false
+}
+
 class TlsIdentityRecoveryTest {
     private class FakeIdentity(val id: String)
 
-    private class Fixture(private val permanent: Boolean = false, private val incompatible: Boolean = false) {
+    private class Fixture(private val incompatible: Boolean = false) {
         val events = mutableListOf<String>()
+        var selfTestError: Throwable? = null
         val recovery = TlsIdentityRecovery<FakeIdentity>(
-            isPermanentInvalidation = { events += "permanent"; permanent },
+            selfTest = { events += "selfTest"; selfTestError },
+            isPermanentInvalidation = { error -> events += "permanent"; error.isPermanent() },
             authorizationIncompatible = { events += "incompatible"; incompatible },
             deleteIdentity = { events += "delete" },
             generateIdentity = { events += "generate" },
         )
+    }
+
+    @Test fun loadedIdentityThatPassesSelfTestIsUsed() {
+        val fixture = Fixture()
+        val entry = FakeIdentity("existing")
+        assertEquals("existing", fixture.recovery.resolve { TlsLoad.Loaded(entry) }.id)
+        assertEquals(listOf("selfTest"), fixture.events)
     }
 
     @Test fun absentIdentityIsGeneratedOnFirstRun() {
@@ -29,79 +51,100 @@ class TlsIdentityRecoveryTest {
                 first = false
                 TlsLoad.Absent
             } else {
-                TlsLoad.Usable(FakeIdentity("first-run"))
+                TlsLoad.Loaded(FakeIdentity("first-run"))
             }
         }
         assertEquals("first-run", result.id)
-        assertEquals(listOf("generate"), fixture.events)
+        assertEquals(listOf("generate", "selfTest"), fixture.events)
     }
 
-    @Test fun unknownFailurePreservesIdentity() {
-        val fixture = Fixture(permanent = false, incompatible = false)
+    @Test fun selfTestPermanentErrorRegenerates() {
+        val fixture = Fixture()
+        fixture.selfTestError = PermanentMarker()
+        var loaded = false
+        val result = fixture.recovery.resolve {
+            if (!loaded) {
+                loaded = true
+                TlsLoad.Loaded(FakeIdentity("old"))
+            } else {
+                fixture.selfTestError = null
+                TlsLoad.Loaded(FakeIdentity("new"))
+            }
+        }
+        assertEquals("new", result.id)
+        assertEquals(listOf("selfTest", "permanent", "delete", "generate", "selfTest"), fixture.events)
+    }
+
+    @Test fun wrappedPermanentSelfTestErrorRegenerates() {
+        val fixture = Fixture()
+        fixture.selfTestError = RuntimeException("wrapped", PermanentMarker())
+        var loaded = false
+        val result = fixture.recovery.resolve {
+            if (!loaded) {
+                loaded = true
+                TlsLoad.Loaded(FakeIdentity("old"))
+            } else {
+                fixture.selfTestError = null
+                TlsLoad.Loaded(FakeIdentity("new"))
+            }
+        }
+        assertEquals("new", result.id)
+        assertTrue(fixture.events.contains("delete"))
+    }
+
+    @Test fun unknownSelfTestErrorPreservesIdentityAndThrows() {
+        val fixture = Fixture()
+        fixture.selfTestError = IllegalStateException("sign self-test failed")
         try {
-            fixture.recovery.resolve { TlsLoad.Unusable(FakeIdentity("existing"), IllegalStateException("self-test failed")) }
-            fail("expected the error to propagate")
+            fixture.recovery.resolve { TlsLoad.Loaded(FakeIdentity("existing")) }
+            fail("expected the original error to propagate")
         } catch (error: IllegalStateException) {
-            assertEquals("self-test failed", error.message)
+            assertEquals("sign self-test failed", error.message)
+        }
+        assertTrue(fixture.events.none { it == "delete" || it == "generate" })
+    }
+
+    @Test fun unknownSelfTestErrorWithIncompatibleAuthorizationRegenerates() {
+        val fixture = Fixture(incompatible = true)
+        fixture.selfTestError = IllegalStateException("no PSS")
+        var loaded = false
+        val result = fixture.recovery.resolve {
+            if (!loaded) {
+                loaded = true
+                TlsLoad.Loaded(FakeIdentity("old"))
+            } else {
+                fixture.selfTestError = null
+                TlsLoad.Loaded(FakeIdentity("new"))
+            }
+        }
+        assertEquals("new", result.id)
+        assertEquals(listOf("selfTest", "permanent", "incompatible", "delete", "generate", "selfTest"), fixture.events)
+    }
+
+    @Test fun loadFailureUnknownPreservesAndThrows() {
+        val fixture = Fixture()
+        try {
+            fixture.recovery.resolve { TlsLoad.Failed(IllegalStateException("load failed")) }
+            fail("expected the failure to propagate")
+        } catch (error: IllegalStateException) {
+            assertEquals("load failed", error.message)
         }
         assertFalse(fixture.events.contains("delete"))
         assertFalse(fixture.events.contains("generate"))
     }
 
-    @Test fun permanentInvalidationRegenerates() {
-        val fixture = Fixture(permanent = true)
+    @Test fun loadFailureWithPermanentCauseRegenerates() {
+        val fixture = Fixture()
         var loaded = false
         val result = fixture.recovery.resolve {
             if (!loaded) {
                 loaded = true
-                TlsLoad.Unusable(FakeIdentity("old"), IllegalStateException("invalidated"))
+                TlsLoad.Failed(RuntimeException("wrapped", PermanentMarker()))
             } else {
-                TlsLoad.Usable(FakeIdentity("new"))
+                TlsLoad.Loaded(FakeIdentity("new"))
             }
         }
         assertEquals("new", result.id)
-        assertEquals(listOf("permanent", "delete", "generate"), fixture.events)
-    }
-
-    @Test fun authorizationIncompatibleRegenerates() {
-        val fixture = Fixture(permanent = false, incompatible = true)
-        var loaded = false
-        val result = fixture.recovery.resolve {
-            if (!loaded) {
-                loaded = true
-                TlsLoad.Unusable(FakeIdentity("old"), IllegalStateException("no PSS"))
-            } else {
-                TlsLoad.Usable(FakeIdentity("new"))
-            }
-        }
-        assertEquals("new", result.id)
-        assertEquals(listOf("permanent", "incompatible", "delete", "generate"), fixture.events)
-    }
-
-    @Test fun loadFailureThenRecoveryKeepsIdentityAndFingerprintSlot() {
-        val fixture = Fixture()
-        val existing = FakeIdentity("existing")
-        try {
-            fixture.recovery.resolve { TlsLoad.Unusable(existing, IllegalStateException("load failed")) }
-            fail("expected preserve")
-        } catch (_: IllegalStateException) {
-        }
-        // A later, healthy load reuses the same identity: no delete, no regenerate.
-        val result = fixture.recovery.resolve { TlsLoad.Usable(existing) }
-        assertEquals("existing", result.id)
-        assertTrue(fixture.events.none { it == "delete" || it == "generate" })
-    }
-
-    @Test fun signingFailureThenRecoveryKeepsIdentity() {
-        val fixture = Fixture()
-        val existing = FakeIdentity("existing")
-        try {
-            fixture.recovery.resolve { TlsLoad.Unusable(existing, IllegalStateException("sign self-test failed")) }
-            fail("expected preserve")
-        } catch (_: IllegalStateException) {
-        }
-        val result = fixture.recovery.resolve { TlsLoad.Usable(existing) }
-        assertEquals("existing", result.id)
-        assertTrue(fixture.events.none { it == "delete" || it == "generate" })
+        assertEquals(listOf("permanent", "delete", "generate", "selfTest"), fixture.events)
     }
 }

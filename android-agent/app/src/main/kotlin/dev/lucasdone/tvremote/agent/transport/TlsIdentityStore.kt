@@ -37,7 +37,9 @@ class TlsIdentityStore(context: Context) {
 
     private var regeneratedThisLoad = false
     private val recovery = TlsIdentityRecovery<KeyStore.PrivateKeyEntry>(
-        isPermanentInvalidation = { isPermanentInvalidation(it) },        authorizationIncompatible = { keyInfoRejectsSign(loadEntryOrNull()) },
+        selfTest = { entry -> signingSelfTestError(entry) },
+        isPermanentInvalidation = { isPermanentInvalidation(it) },
+        authorizationIncompatible = { entry -> keyInfoRejectsSign(entry) },
         deleteIdentity = {
             Log.w(TAG, "Recreating TLS identity (confirmed unusable)")
             regeneratedThisLoad = true
@@ -61,32 +63,23 @@ class TlsIdentityStore(context: Context) {
 
     /**
      * Loads the identity without ever turning a read failure into [TlsLoad.Absent]: a missing alias is
-     * the only case that triggers first-run generation.
+     * the only case that triggers first-run generation. The signing self-test runs in the recovery
+     * policy so its original exception reaches the permanent/authorization decision.
      */
     private fun load(): TlsLoad<KeyStore.PrivateKeyEntry> {
         val keyStore = try {
             KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         } catch (error: Exception) {
-            return TlsLoad.Unusable(null, error)
+            return TlsLoad.Failed(error)
         }
         if (!keyStore.containsAlias(KEY_ALIAS)) return TlsLoad.Absent
         val entry = try {
             keyStore.getEntry(KEY_ALIAS, null)
         } catch (error: Exception) {
-            return TlsLoad.Unusable(null, error)
+            return TlsLoad.Failed(error)
         } as? KeyStore.PrivateKeyEntry
-            ?: return TlsLoad.Unusable(null, IllegalStateException("TLS alias is not a private-key entry"))
-        if (!signingRoundTripSucceeds(entry)) {
-            return TlsLoad.Unusable(entry, IllegalStateException("TLS identity failed its signing self-test"))
-        }
-        return TlsLoad.Usable(entry)
-    }
-
-    private fun loadEntryOrNull(): KeyStore.PrivateKeyEntry? = try {
-        KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-            .getEntry(KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry
-    } catch (_: Exception) {
-        null
+            ?: return TlsLoad.Failed(IllegalStateException("TLS alias is not a private-key entry"))
+        return TlsLoad.Loaded(entry)
     }
 
     /** Only SIGN (the private-key operation) and the digests/paddings actually used are checked. */
@@ -111,15 +104,6 @@ class TlsIdentityStore(context: Context) {
         )
     }
 
-    /**
-     * The key must sign with PKCS#1 (all versions) and, when TLS 1.3 is available, with PSS, which
-     * TLS 1.3 mandates. Older platforms never negotiate TLS 1.3, so PKCS#1 alone is sufficient there
-     * and re-creating a working key (which invalidates pairings) is avoided.
-     */
-    private fun signingRoundTripSucceeds(entry: KeyStore.PrivateKeyEntry): Boolean =
-        signatureRoundTrip(entry, "SHA256withRSA") &&
-            (!tls13Available() || signatureRoundTrip(entry, "SHA256withRSA/PSS"))
-
     private fun tls13Available(): Boolean = try {
         SSLContext.getInstance("TLS").apply { init(null, null, null) }
             .supportedSSLParameters.protocols.contains("TLSv1.3")
@@ -127,7 +111,15 @@ class TlsIdentityStore(context: Context) {
         false
     }
 
-    private fun signatureRoundTrip(entry: KeyStore.PrivateKeyEntry, algorithm: String): Boolean = try {
+    /**
+     * The key must sign with PKCS#1 (all versions) and, when TLS 1.3 is available, with PSS. Returns
+     * the original failure so the recovery policy can see a permanent invalidation through the cause.
+     */
+    private fun signingSelfTestError(entry: KeyStore.PrivateKeyEntry): Throwable? =
+        signatureRoundTrip(entry, "SHA256withRSA")
+            ?: if (tls13Available()) signatureRoundTrip(entry, "SHA256withRSA/PSS") else null
+
+    private fun signatureRoundTrip(entry: KeyStore.PrivateKeyEntry, algorithm: String): Throwable? = try {
         val sample = ByteArray(32).also(SecureRandom()::nextBytes)
         val signed = Signature.getInstance(algorithm).apply {
             initSign(entry.privateKey)
@@ -138,8 +130,9 @@ class TlsIdentityStore(context: Context) {
             update(sample)
             verify(signed)
         }
-    } catch (_: Exception) {
-        false
+        null
+    } catch (error: Exception) {
+        error
     }
 
     private fun deleteEntry() {

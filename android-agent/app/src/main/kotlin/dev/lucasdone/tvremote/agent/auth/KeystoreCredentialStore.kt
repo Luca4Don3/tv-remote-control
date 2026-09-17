@@ -10,17 +10,13 @@ import android.util.Base64
 import android.util.Log
 import dev.lucasdone.tvremote.agent.protocol.Hex
 import java.math.BigInteger
-import java.security.InvalidKeyException
 import java.security.Key
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.security.UnrecoverableKeyException
 import java.util.Calendar
-import javax.crypto.AEADBadTagException
-import javax.crypto.BadPaddingException
 import javax.crypto.Cipher
 import javax.security.auth.x500.X500Principal
 
@@ -323,22 +319,6 @@ class KeystoreCredentialStore(context: Context) {
         private const val STATE_PREFIX = "state."
         private val CONTROLLER_ID = Regex("[A-Za-z0-9._:-]{1,128}")
     }
-}
-
-/**
- * Candidate handling for a Keystore failure:
- * - [KEY_REPAIR]: the wrapping key may be unusable (e.g. generated without the required OAEP
- *   digest). This is only a candidate — [KeystoreRecovery] rebuilds the key solely after a
- *   non-destructive self-test confirms it cannot be used.
- * - [DROP_RECORD]: only the affected ciphertext is corrupt; healthy pairings must survive.
- * - [PROPAGATE]: transient or unexpected, so callers fail loudly instead of discarding data.
- */
-internal enum class KeystoreFailureAction { KEY_REPAIR, DROP_RECORD, PROPAGATE }
-
-internal fun classifyKeystoreFailure(error: Throwable): KeystoreFailureAction = when (error) {
-    is InvalidKeyException, is UnrecoverableKeyException -> KeystoreFailureAction.KEY_REPAIR
-    is AEADBadTagException, is BadPaddingException, is IllegalArgumentException -> KeystoreFailureAction.DROP_RECORD
-    else -> KeystoreFailureAction.PROPAGATE
 }
 
 enum class CredentialState { PENDING, ACTIVE }

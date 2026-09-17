@@ -1,11 +1,16 @@
 package dev.lucasdone.tvremote.xiaomi
 
+import dev.lucasdone.tvremote.agent.auth.KeystoreFailureAction
 import dev.lucasdone.tvremote.agent.auth.authorizationIncompatible
+import dev.lucasdone.tvremote.agent.auth.classifyKeystoreFailure
 import dev.lucasdone.tvremote.agent.auth.isPermanentInvalidation
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.security.InvalidKeyException
+import java.security.UnrecoverableKeyException
+import javax.crypto.BadPaddingException
 
 class KeystoreFaultsTest {
     private class Permanent : InvalidKeyException()
@@ -57,6 +62,22 @@ class KeystoreFaultsTest {
     @Test fun permanentInvalidationIsIgnoredOnOldPlatforms() {
         val permanent: (Throwable) -> Boolean = { it is Permanent }
         assertFalse(isPermanentInvalidation(Permanent(), 19, permanent))
+    }
+
+    @Test fun classificationWalksTheCauseChain() {
+        assertEquals(
+            KeystoreFailureAction.KEY_REPAIR,
+            classifyKeystoreFailure(RuntimeException("wrapped", InvalidKeyException("digest not authorized"))),
+        )
+        assertEquals(
+            KeystoreFailureAction.KEY_REPAIR,
+            classifyKeystoreFailure(RuntimeException("wrapped", UnrecoverableKeyException("lost"))),
+        )
+        assertEquals(
+            KeystoreFailureAction.DROP_RECORD,
+            classifyKeystoreFailure(RuntimeException("wrapped", BadPaddingException("corrupt"))),
+        )
+        assertEquals(KeystoreFailureAction.PROPAGATE, classifyKeystoreFailure(RuntimeException("unrelated")))
     }
 
     private fun incompatible(

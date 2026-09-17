@@ -88,6 +88,20 @@ class KeystoreFailureTest {
         assertTrue(store.records.isEmpty())
     }
 
+    @Test fun wrappedKeyFaultStillEntersRecovery() {
+        // A KeyPermanentlyInvalidatedException wrapped in a RuntimeException must not be classified as
+        // unexpected: the cause chain is walked, so the entry still reaches the fault decision.
+        val store = FakeStore(existingUsable = false, fault = KeyFault.PERMANENT)
+        var attempts = 0
+        val result = store.recovery.run("corrupt") {
+            attempts += 1
+            if (attempts == 1) throw RuntimeException("wrapped", InvalidKeyException("permanently invalidated"))
+            "recovered"
+        }
+        assertEquals("recovered", result)
+        assertEquals(listOf("existing", "fault", "deleteKey", "clearRecords"), store.events)
+    }
+
     @Test fun authorizationIncompatibleRepairsThenRetries() {
         val store = FakeStore(existingUsable = false, fault = KeyFault.AUTHORIZATION_INCOMPATIBLE)
         var attempts = 0
