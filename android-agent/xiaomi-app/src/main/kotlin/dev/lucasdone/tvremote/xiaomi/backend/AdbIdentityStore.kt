@@ -4,11 +4,15 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
 import dadb.AdbKeyPair
+import dev.lucasdone.tvremote.agent.auth.KeyFault
 import dev.lucasdone.tvremote.agent.auth.KeystoreRecovery
+import dev.lucasdone.tvremote.agent.auth.authorizationIncompatible
+import dev.lucasdone.tvremote.agent.auth.isPermanentInvalidation
 import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.security.KeyFactory
@@ -32,7 +36,7 @@ class AdbIdentityStore(private val context: Context) {
     private val prefs = context.getSharedPreferences("xiaomi_adb_identity", Context.MODE_PRIVATE)
     private val recovery = KeystoreRecovery(
         existingKeyUsable = { wrappingKeyRoundTrip() },
-        controlKeyUsable = { controlKeyRoundTrip() },
+        keyFault = { error -> keyFault(error) },
         deleteKey = {
             Log.w(TAG, "Rebuilding unusable ADB wrapping key")
             deleteWrappingKey()
@@ -75,33 +79,41 @@ class AdbIdentityStore(private val context: Context) {
     }
     /** Non-destructive RSA wrap/unwrap round trip proving the existing alias can still be used. */
     private fun wrappingKeyRoundTrip(): Boolean = try {
-        val key = wrappingKey()
-        rsaRoundTrip(key)
+        rsaRoundTrip(wrappingKey())
     } catch (_: Exception) {
         false
     }
 
-    /**
-     * Proves the Keystore/provider can still generate and use an RSA key. Only when this succeeds
-     * while the existing alias fails can the alias be confirmed as the fault (not a temporary
-     * provider problem), so it is safe to rebuild it.
-     */
-    private fun controlKeyRoundTrip(): Boolean {
-        val store = try {
-            KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    private fun keyFault(error: Throwable): KeyFault = when {
+        isPermanentInvalidation(error) -> KeyFault.PERMANENT
+        keyInfoRejectsDecrypt() -> KeyFault.AUTHORIZATION_INCOMPATIBLE
+        else -> KeyFault.UNKNOWN
+    }
+
+    /** Only DECRYPT (the private-key operation) and the digests/paddings actually used are checked. */
+    private fun keyInfoRejectsDecrypt(): Boolean {
+        if (Build.VERSION.SDK_INT < 23) return false
+        val key = try {
+            wrappingKey()
         } catch (_: Exception) {
             return false
         }
-        return try {
-            if (store.containsAlias(CONTROL_ALIAS)) store.deleteEntry(CONTROL_ALIAS)
-            generateWrappingKey(CONTROL_ALIAS)
-            val key = store.getEntry(CONTROL_ALIAS, null) as? KeyStore.PrivateKeyEntry ?: return false
-            rsaRoundTrip(key)
-        } catch (_: Exception) {
-            false
-        } finally {
-            runCatching { if (store.containsAlias(CONTROL_ALIAS)) store.deleteEntry(CONTROL_ALIAS) }
-        }
+        val info = keyInfoOf(key.privateKey) ?: return false
+        return authorizationIncompatible(
+            purposes = info.purposes,
+            digests = info.digests?.toSet().orEmpty(),
+            paddings = info.encryptionPaddings?.toSet().orEmpty(),
+            requiredPurpose = KeyProperties.PURPOSE_DECRYPT,
+            requiredDigest = KeyProperties.DIGEST_SHA256,
+            requiredPadding = KeyProperties.ENCRYPTION_PADDING_RSA_OAEP,
+        )
+    }
+
+    @SuppressLint("NewApi")
+    private fun keyInfoOf(key: java.security.Key): KeyInfo? = try {
+        KeyFactory.getInstance(key.algorithm, "AndroidKeyStore").getKeySpec(key, KeyInfo::class.java)
+    } catch (_: Exception) {
+        null
     }
 
     private fun rsaRoundTrip(key: KeyStore.PrivateKeyEntry): Boolean {
@@ -173,6 +185,5 @@ class AdbIdentityStore(private val context: Context) {
         private const val TAG = "TvrcAdbIdentity"
         private const val RECORD_ID = "identity"
         private const val ALIAS = "xiaomi_local_adb_wrap_v1"
-        private const val CONTROL_ALIAS = "xiaomi_local_adb_wrap_v1.control"
     }
 }

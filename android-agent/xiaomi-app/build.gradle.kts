@@ -69,9 +69,11 @@ val sharedSources = tasks.register<PrepareSharedAgentSources>("prepareSharedAgen
     outputDirectory.set(layout.buildDirectory.dir("generated/shared-agent"))
     sourcePaths.set(listOf(
         "dev/lucasdone/tvremote/agent/auth/KeystoreCredentialStore.kt",
+        "dev/lucasdone/tvremote/agent/auth/KeystoreFaults.kt",
         "dev/lucasdone/tvremote/agent/auth/KeystoreRecovery.kt",
         "dev/lucasdone/tvremote/agent/transport/ControlServer.kt",
         "dev/lucasdone/tvremote/agent/transport/DiscoveryServer.kt",
+        "dev/lucasdone/tvremote/agent/transport/TlsIdentityRecovery.kt",
         "dev/lucasdone/tvremote/agent/transport/TlsIdentityStore.kt",
         "dev/lucasdone/tvremote/agent/transport/TlsPolicy.kt",
         "dev/lucasdone/tvremote/agent/command/CommandExecutor.kt",

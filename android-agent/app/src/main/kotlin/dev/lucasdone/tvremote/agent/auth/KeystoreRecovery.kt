@@ -3,16 +3,16 @@ package dev.lucasdone.tvremote.agent.auth
 /**
  * Confirm-before-repair policy for Keystore-wrapped data.
  *
- * A key-level failure only causes a rebuild when the existing key fails its self-test **and** a
- * freshly generated control key works, proving the Keystore/provider is healthy and the old key is
- * the fault. If the existing key works, or the control key also fails (a transient/provider fault we
- * cannot attribute to the key), the original error is rethrown so no data is discarded.
+ * A key-level failure only causes a rebuild when the existing key is not usable now **and** the
+ * failure carries positive evidence — a permanent invalidation or an authorization-config
+ * incompatibility. Any other failure (transient, environment-specific, unknown, or on platforms
+ * without such signals) preserves the key and its records and rethrows the original error.
  *
  * Record-level corruption drops only the affected record; anything else propagates.
  */
 internal class KeystoreRecovery(
     private val existingKeyUsable: () -> Boolean,
-    private val controlKeyUsable: () -> Boolean,
+    private val keyFault: (Throwable) -> KeyFault,
     private val deleteKey: () -> Unit,
     private val clearRecords: () -> Unit,
     private val removeRecord: (String) -> Unit,
@@ -27,10 +27,14 @@ internal class KeystoreRecovery(
         when (classifyKeystoreFailure(error)) {
             KeystoreFailureAction.KEY_REPAIR -> {
                 if (existingKeyUsable()) throw error
-                if (!controlKeyUsable()) throw error // environment unhealthy: cannot confirm the key is at fault
-                deleteKey() // propagates on failure, before any record is cleared
-                clearRecords()
-                operation()
+                when (keyFault(error)) {
+                    KeyFault.PERMANENT, KeyFault.AUTHORIZATION_INCOMPATIBLE -> {
+                        deleteKey() // propagates on failure, before any record is cleared
+                        clearRecords()
+                        operation()
+                    }
+                    KeyFault.UNKNOWN -> throw error
+                }
             }
             KeystoreFailureAction.DROP_RECORD -> {
                 removeRecord(controllerId ?: throw error)

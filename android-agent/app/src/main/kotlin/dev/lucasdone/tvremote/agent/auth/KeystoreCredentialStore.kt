@@ -4,12 +4,15 @@ import android.content.Context
 import android.annotation.SuppressLint
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
 import dev.lucasdone.tvremote.agent.protocol.Hex
 import java.math.BigInteger
 import java.security.InvalidKeyException
+import java.security.Key
+import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -80,7 +83,7 @@ class KeystoreCredentialStore(context: Context) {
 
     private val recovery = KeystoreRecovery(
         existingKeyUsable = { wrappingKeyRoundTrip() },
-        controlKeyUsable = { controlKeyRoundTrip() },
+        keyFault = { error -> keyFault(error) },
         deleteKey = {
             Log.w(TAG, "Rebuilding unusable pairing key")
             deleteWrappingKey()
@@ -93,9 +96,9 @@ class KeystoreCredentialStore(context: Context) {
     )
 
     /**
-     * Decrypts a stored secret. A key-level failure is only repaired after [wrappingKeyRoundTrip]
-     * fails while a fresh control key works, proving the environment is healthy; otherwise data is
-     * preserved and the error is rethrown. A corrupt envelope drops only that record.
+     * Decrypts a stored secret. A key-level failure is only repaired on positive evidence (permanent
+     * invalidation or a DECRYPT authorization mismatch); otherwise data is preserved and the error is
+     * rethrown. A corrupt envelope drops only that record.
      */
     private fun readSecret(controllerId: String): ByteArray? = recovery.run(controllerId) {
         // Re-read each attempt: after a key repair clears the records, the retry must observe that the
@@ -112,28 +115,29 @@ class KeystoreCredentialStore(context: Context) {
         false
     }
 
-    /**
-     * Proves the Keystore/provider can still generate and use an RSA key. Only when this succeeds
-     * while the existing key fails can the existing key be confirmed as the fault (not a temporary
-     * provider problem), so it is safe to rebuild it.
-     */
-    private fun controlKeyRoundTrip(): Boolean {
-        val store = try {
-            KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+    private fun keyFault(error: Throwable): KeyFault = when {
+        isPermanentInvalidation(error) -> KeyFault.PERMANENT
+        keyInfoRejectsDecrypt() -> KeyFault.AUTHORIZATION_INCOMPATIBLE
+        else -> KeyFault.UNKNOWN
+    }
+
+    /** Only DECRYPT (the private-key operation) and the digests/paddings actually used are checked. */
+    private fun keyInfoRejectsDecrypt(): Boolean {
+        if (Build.VERSION.SDK_INT < 23) return false
+        val key = try {
+            getOrCreateKeyPair()
         } catch (_: Exception) {
             return false
         }
-        return try {
-            if (store.containsAlias(CONTROL_ALIAS)) store.deleteEntry(CONTROL_ALIAS)
-            generateKeyPair(CONTROL_ALIAS)
-            val entry = store.getEntry(CONTROL_ALIAS, null) as? KeyStore.PrivateKeyEntry ?: return false
-            val sample = ByteArray(32).also(SecureRandom()::nextBytes)
-            MessageDigest.isEqual(sample, decryptWith(entry, encryptWith(entry, sample)))
-        } catch (_: Exception) {
-            false
-        } finally {
-            runCatching { if (store.containsAlias(CONTROL_ALIAS)) store.deleteEntry(CONTROL_ALIAS) }
-        }
+        val info = keyInfoOf(key.privateKey) ?: return false
+        return authorizationIncompatible(
+            purposes = info.purposes,
+            digests = info.digests?.toSet().orEmpty(),
+            paddings = info.encryptionPaddings?.toSet().orEmpty(),
+            requiredPurpose = KeyProperties.PURPOSE_DECRYPT,
+            requiredDigest = KeyProperties.DIGEST_SHA256,
+            requiredPadding = KeyProperties.ENCRYPTION_PADDING_RSA_OAEP,
+        )
     }
 
     private fun removeCorruptRecord(controllerId: String) {
@@ -298,11 +302,18 @@ class KeystoreCredentialStore(context: Context) {
         generator.generateKeyPair()
     }
 
+    /** Returns the key's authorization metadata, or null when it cannot be inspected. */
+    @SuppressLint("NewApi")
+    private fun keyInfoOf(key: Key): KeyInfo? = try {
+        KeyFactory.getInstance(key.algorithm, ANDROID_KEYSTORE).getKeySpec(key, KeyInfo::class.java)
+    } catch (_: Exception) {
+        null
+    }
+
     companion object {
         private const val TAG = "TvrcCredentials"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "tv_remote_controller_wrap_key"
-        private const val CONTROL_ALIAS = "tv_remote_controller_wrap_key.control"
         private const val RSA_OAEP_TRANSFORMATION = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
         private const val RSA_PKCS1_TRANSFORMATION = "RSA/ECB/PKCS1Padding"
         private const val MAX_CONTROLLERS = 8

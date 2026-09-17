@@ -3,14 +3,17 @@
 package dev.lucasdone.tvremote.agent.transport
 
 import android.content.Context
+import android.annotation.SuppressLint
 import android.os.Build
 import android.security.KeyPairGeneratorSpec
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.util.Log
-import dev.lucasdone.tvremote.agent.auth.KeystoreFailureAction
-import dev.lucasdone.tvremote.agent.auth.classifyKeystoreFailure
+import dev.lucasdone.tvremote.agent.auth.authorizationIncompatible
+import dev.lucasdone.tvremote.agent.auth.isPermanentInvalidation
 import java.math.BigInteger
+import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
@@ -32,74 +35,80 @@ data class TlsIdentity(
 class TlsIdentityStore(context: Context) {
     private val applicationContext = context.applicationContext
 
+    private var regeneratedThisLoad = false
+    private val recovery = TlsIdentityRecovery<KeyStore.PrivateKeyEntry>(
+        isPermanentInvalidation = { isPermanentInvalidation(it) },        authorizationIncompatible = { keyInfoRejectsSign(loadEntryOrNull()) },
+        deleteIdentity = {
+            Log.w(TAG, "Recreating TLS identity (confirmed unusable)")
+            regeneratedThisLoad = true
+            deleteEntry()
+        },
+        generateIdentity = { generateKeyPair(KEY_ALIAS) },
+    )
+
     @Synchronized
     fun loadOrCreate(): TlsIdentity {
-        val hadAlias = containsAlias()
-        var entry = loadUsableEntry()
-        val regenerated = entry == null && hadAlias
-        if (entry == null) {
-            // Missing or unusable identity: recreate it. This changes the certificate fingerprint, so
-            // controllers must pair again (surfaced to the user as a re-pair requirement).
-            deleteEntry()
-            generateKeyPair(KEY_ALIAS)
-            entry = loadUsableEntry() ?: throw IllegalStateException("Android Keystore did not retain TLS identity")
-        }
+        regeneratedThisLoad = false
+        val entry = recovery.resolve { load() }
         val certificate = entry.certificate as X509Certificate
         val keyManager = FixedServerKeyManager(entry.privateKey, arrayOf(certificate))
         val sslContext = SSLContext.getInstance("TLS").apply {
             init(arrayOf(keyManager), null, SecureRandom())
         }
         val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
-        return TlsIdentity(sslContext, fingerprint, regenerated)
+        return TlsIdentity(sslContext, fingerprint, regeneratedThisLoad)
     }
 
     /**
-     * Returns a usable entry, or null when the alias is missing or its key is confirmed unusable by a
-     * signing self-test. A failed identity is only rebuilt when a fresh control key can sign, proving
-     * the Keystore environment is healthy; a temporary signing fault keeps the identity and throws.
+     * Loads the identity without ever turning a read failure into [TlsLoad.Absent]: a missing alias is
+     * the only case that triggers first-run generation.
      */
-    private fun loadUsableEntry(): KeyStore.PrivateKeyEntry? {
-        val entry = try {
-            loadEntry()
-        } catch (error: Exception) {
-            if (classifyKeystoreFailure(error) != KeystoreFailureAction.KEY_REPAIR) throw error
-            if (!controlSigningWorks()) {
-                Log.w(TAG, "TLS identity load failed and the environment cannot sign; keeping it")
-                throw error
-            }
-            Log.w(TAG, "Recreating unusable TLS identity: ${error.javaClass.simpleName}")
-            return null
-        } ?: return null
-        if (!signingRoundTripSucceeds(entry)) {
-            if (!controlSigningWorks()) {
-                throw IllegalStateException("TLS identity failed its self-test and the environment cannot sign")
-            }
-            Log.w(TAG, "Recreating TLS identity that failed its signing self-test")
-            return null
-        }
-        return entry
-    }
-
-    /**
-     * Generates a throwaway key and signs with it, proving the Keystore/provider is healthy. Only then
-     * can a failing identity be blamed on the key itself rather than a temporary fault.
-     */
-    private fun controlSigningWorks(): Boolean {
+    private fun load(): TlsLoad<KeyStore.PrivateKeyEntry> {
         val keyStore = try {
             KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        } catch (error: Exception) {
+            return TlsLoad.Unusable(null, error)
+        }
+        if (!keyStore.containsAlias(KEY_ALIAS)) return TlsLoad.Absent
+        val entry = try {
+            keyStore.getEntry(KEY_ALIAS, null)
+        } catch (error: Exception) {
+            return TlsLoad.Unusable(null, error)
+        } as? KeyStore.PrivateKeyEntry
+            ?: return TlsLoad.Unusable(null, IllegalStateException("TLS alias is not a private-key entry"))
+        if (!signingRoundTripSucceeds(entry)) {
+            return TlsLoad.Unusable(entry, IllegalStateException("TLS identity failed its signing self-test"))
+        }
+        return TlsLoad.Usable(entry)
+    }
+
+    private fun loadEntryOrNull(): KeyStore.PrivateKeyEntry? = try {
+        KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            .getEntry(KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Only SIGN (the private-key operation) and the digests/paddings actually used are checked. */
+    @SuppressLint("NewApi")
+    private fun keyInfoRejectsSign(entry: KeyStore.PrivateKeyEntry?): Boolean {
+        if (Build.VERSION.SDK_INT < 23) return false
+        val key = entry ?: return false
+        val info = try {
+            KeyFactory.getInstance(key.privateKey.algorithm, ANDROID_KEYSTORE)
+                .getKeySpec(key.privateKey, KeyInfo::class.java)
         } catch (_: Exception) {
             return false
         }
-        return try {
-            if (keyStore.containsAlias(CONTROL_ALIAS)) keyStore.deleteEntry(CONTROL_ALIAS)
-            generateKeyPair(CONTROL_ALIAS)
-            val entry = keyStore.getEntry(CONTROL_ALIAS, null) as? KeyStore.PrivateKeyEntry ?: return false
-            signingRoundTripSucceeds(entry)
-        } catch (_: Exception) {
-            false
-        } finally {
-            runCatching { if (keyStore.containsAlias(CONTROL_ALIAS)) keyStore.deleteEntry(CONTROL_ALIAS) }
-        }
+        return authorizationIncompatible(
+            purposes = info.purposes,
+            digests = info.digests?.toSet().orEmpty(),
+            paddings = info.signaturePaddings?.toSet().orEmpty(),
+            requiredPurpose = KeyProperties.PURPOSE_SIGN,
+            requiredDigest = KeyProperties.DIGEST_SHA256,
+            requiredPadding = KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,
+            extraPadding = if (tls13Available()) KeyProperties.SIGNATURE_PADDING_RSA_PSS else null,
+        )
     }
 
     /**
@@ -136,14 +145,6 @@ class TlsIdentityStore(context: Context) {
     private fun deleteEntry() {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         if (keyStore.containsAlias(KEY_ALIAS)) keyStore.deleteEntry(KEY_ALIAS)
-    }
-
-    private fun containsAlias(): Boolean =
-        KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.containsAlias(KEY_ALIAS)
-
-    private fun loadEntry(): KeyStore.PrivateKeyEntry? {
-        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        return keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry
     }
 
     private fun generateKeyPair(alias: String) {
@@ -217,6 +218,5 @@ class TlsIdentityStore(context: Context) {
         private const val TAG = "TvrcTlsIdentity"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "tv_remote_tls_identity_v1"
-        private const val CONTROL_ALIAS = "tv_remote_tls_identity_v1.control"
     }
 }
