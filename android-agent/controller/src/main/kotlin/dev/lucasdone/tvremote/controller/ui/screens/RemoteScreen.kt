@@ -231,8 +231,12 @@ private fun RemoteKey(
                     onPress = {
                         if (key in LONG_PRESS_KEYS) {
                             viewModel.beginKeyPress(key)
-                            tryAwaitRelease()
-                            viewModel.endKeyPress(key)
+                            // 页面销毁/手势取消也要释放，避免电视保留按下状态
+                            try {
+                                tryAwaitRelease()
+                            } finally {
+                                viewModel.endKeyPress(key)
+                            }
                         } else {
                             viewModel.sendKey(key, "PRESS")
                         }

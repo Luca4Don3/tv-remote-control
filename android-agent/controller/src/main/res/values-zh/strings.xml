@@ -8,6 +8,7 @@
     <string name="action_cancel">取消</string>
     <string name="action_save">保存</string>
     <string name="action_connect">连接</string>
+    <string name="action_open_remote">打开遥控</string>
     <string name="action_rename">改名</string>
     <string name="action_change_address">更改地址</string>
     <string name="dialog_change_address_title">更改电视地址</string>

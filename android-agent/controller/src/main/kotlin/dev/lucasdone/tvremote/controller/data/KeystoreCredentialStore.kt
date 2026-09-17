@@ -53,7 +53,25 @@ class KeystoreCredentialStore(
             }
         }
         legacyRecords().forEach { legacy -> if (legacy.id !in merged) merged[legacy.id] = legacy }
-        return DeviceLoad(merged.values.sortedByDescending { it.lastUsedAtMs }, unreadable)
+        return DeviceLoad(
+            devices = merged.values.sortedByDescending { it.lastUsedAtMs },
+            unreadableIds = unreadable,
+            pending = pendingRecords(),
+        )
+    }
+
+    /** 已尝试发送 ack 的待确认凭据（需认证确认）；未尝试发送的由启动清理丢弃。 */
+    private fun pendingRecords(): List<StoredDevice> {
+        val result = mutableListOf<StoredDevice>()
+        prefs.all.forEach { (key, value) ->
+            if (!key.startsWith(PENDING_PREFIX) || key.endsWith(ACK_SUFFIX)) return@forEach
+            // 已尝试（"1"）或旧格式缺标记（null）都保留；仅显式未尝试（"0"）由启动清理
+            if (prefs.getString(key + ACK_SUFFIX, null) == ACK_NOT_ATTEMPTED) return@forEach
+            val raw = value as? String ?: return@forEach
+            val id = key.removePrefix(PENDING_PREFIX)
+            runCatching { decodeRecord(id, raw) }.getOrNull()?.let { result += it }
+        }
+        return result
     }
 
     @Synchronized
@@ -74,6 +92,17 @@ class KeystoreCredentialStore(
     @Synchronized
     override fun savePending(device: StoredDevice) {
         writePending(PENDING_PREFIX + device.id, device)
+        // 新 pending 显式标记“尚未尝试发送 ack”（旧格式缺标记按已尝试保守保留）
+        prefs.edit().putString(PENDING_PREFIX + device.id + ACK_SUFFIX, ACK_NOT_ATTEMPTED).commit()
+    }
+
+    @Synchronized
+    override fun markPendingAckAttempted(id: String) {
+        val key = PENDING_PREFIX + id
+        if (prefs.getString(key, null) == null) throw CredentialStoreException("pending credential missing")
+        if (!prefs.edit().putString(key + ACK_SUFFIX, ACK_ATTEMPTED).commit()) {
+            throw CredentialStoreException("failed to persist ack-attempted flag")
+        }
     }
 
     @Synchronized
@@ -85,6 +114,7 @@ class KeystoreCredentialStore(
         val committed = prefs.edit()
             .putString(DEVICE_PREFIX + id, encoded)
             .remove(pendingKey)
+            .remove(pendingKey + ACK_SUFFIX)
             .commit()
         if (!committed) throw CredentialStoreException("failed to promote credential")
         removeLegacyFor(device.certificateFingerprintHex)
@@ -92,7 +122,10 @@ class KeystoreCredentialStore(
 
     @Synchronized
     override fun discardPending(id: String) {
-        prefs.edit().remove(PENDING_PREFIX + id).commit()
+        prefs.edit()
+            .remove(PENDING_PREFIX + id)
+            .remove(PENDING_PREFIX + id + ACK_SUFFIX)
+            .commit()
     }
 
     @Synchronized
@@ -106,6 +139,7 @@ class KeystoreCredentialStore(
         val committed = prefs.edit()
             .remove(DEVICE_PREFIX + id)
             .remove(PENDING_PREFIX + id)
+            .remove(PENDING_PREFIX + id + ACK_SUFFIX)
             .commit()
         if (!committed) throw CredentialStoreException("failed to persist device removal")
         // 即使有效记录已损坏（find 失败），也按指纹清理同设备的旧 IP 记录，避免设备“复活”
@@ -259,12 +293,18 @@ class KeystoreCredentialStore(
     }
 
     private fun discardStalePending() {
-        val stale = prefs.all.keys.filter { it.startsWith(PENDING_PREFIX) }
+        // 只清理“确定未尝试发送 ack”的 pending；已尝试的保留以便认证对账（电视可能已激活）
+        // 只清理显式标记“未尝试发送”的新格式 pending；缺标记的旧格式保守保留
+        val stale = prefs.all.keys
+            .filter { it.startsWith(PENDING_PREFIX) && !it.endsWith(ACK_SUFFIX) }
+            .filter { prefs.getString(it + ACK_SUFFIX, null) == ACK_NOT_ATTEMPTED }
         if (stale.isEmpty()) return
-        // 清理失败不影响有效设备；失败时重试一次，避免残留 pending 长期存在
         repeat(2) {
             val edit = prefs.edit()
-            stale.forEach { edit.remove(it) }
+            stale.forEach {
+                edit.remove(it)
+                edit.remove(it + ACK_SUFFIX)
+            }
             if (edit.commit()) return
         }
     }
@@ -279,6 +319,9 @@ class KeystoreCredentialStore(
         private const val PREFS_NAME = "tvrc_controller_credentials"
         private const val DEVICE_PREFIX = "device."
         private const val PENDING_PREFIX = "pending."
+        private const val ACK_SUFFIX = ".ack"
+        private const val ACK_ATTEMPTED = "1"
+        private const val ACK_NOT_ATTEMPTED = "0"
         private const val LEGACY_PREFIX = "tv."
         private const val CIPHER_SEPARATOR = ':'
     }
