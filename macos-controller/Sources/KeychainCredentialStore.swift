@@ -9,7 +9,7 @@ enum KeychainStoreError: Error {
 }
 
 final class KeychainCredentialStore: @unchecked Sendable {
-    static let service = "dev.lucasdone.tv-remote-control"
+    static let service = "dev.tv-remote-control"
     private let lock = NSLock()
     private func remove(account: String) throws {
         try lock.withLock {

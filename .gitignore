@@ -39,3 +39,6 @@ windows-controller/zig-pkg/
 
 # 小程序依赖与产物（npm 锁文件保留，node_modules 不入库）
 node_modules/
+
+# Python 缓存
+__pycache__/

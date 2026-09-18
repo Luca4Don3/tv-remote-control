@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
     <key>CFBundleExecutable</key><string>tv-remote-control</string>
-    <key>CFBundleIdentifier</key><string>dev.lucasdone.tv-remote-control</string>
+    <key>CFBundleIdentifier</key><string>dev.tv-remote-control</string>
     <key>CFBundleName</key><string>TV Remote Control</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>__TVRC_VERSION__</string>

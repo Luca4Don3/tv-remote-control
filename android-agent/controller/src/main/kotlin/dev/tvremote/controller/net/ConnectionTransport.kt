@@ -1,0 +1,19 @@
+package dev.tvremote.controller.net
+
+import dev.tvremote.agent.protocol.JsonValue
+import dev.tvremote.agent.protocol.ProtocolEnvelope
+
+/** 与电视的传输抽象：`TvConnection`（TLS）实现之，测试用伪实现驱动状态机。 */
+interface ConnectionTransport : AutoCloseable {
+    val peerFingerprint: ByteArray
+
+    fun nextRequestId(): String
+
+    fun send(requestId: String, sessionId: String, type: String, payload: JsonValue.ObjectValue): ProtocolEnvelope
+
+    /** 阻塞读一条入向信封；null 表示对端关闭。 */
+    fun receive(): ProtocolEnvelope?
+
+    /** 设置阻塞读超时（毫秒）。默认实现忽略（测试伪实现无需处理）。 */
+    fun setReadTimeout(timeoutMs: Int) {}
+}

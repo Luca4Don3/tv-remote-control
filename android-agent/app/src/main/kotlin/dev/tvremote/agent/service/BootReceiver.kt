@@ -1,0 +1,18 @@
+package dev.tvremote.agent.service
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        if (!AgentService.shouldStartAtBoot(context)) return
+        runCatching { AgentService.start(context, enableAtBoot = false) }
+            .onFailure { error ->
+                Log.e("BootReceiver", "Unable to start foreground service after boot", error)
+                runCatching { AgentPreferences(context).startupFailure = true }
+            }
+    }
+}

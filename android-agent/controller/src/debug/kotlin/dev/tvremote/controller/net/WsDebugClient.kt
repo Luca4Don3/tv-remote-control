@@ -1,0 +1,199 @@
+package dev.tvremote.controller.net
+
+import dev.tvremote.agent.protocol.Hex
+import dev.tvremote.agent.protocol.JsonValue
+import dev.tvremote.agent.protocol.ProtocolCodec
+import dev.tvremote.agent.protocol.ProtocolEnvelope
+import dev.tvremote.agent.protocol.jsonLong
+import dev.tvremote.agent.protocol.jsonObject
+import dev.tvremote.agent.protocol.jsonString
+import dev.tvremote.agent.protocol.requireLong
+import dev.tvremote.agent.protocol.requireString
+import dev.tvremote.agent.transport.ws.DebugSessionCrypto
+import dev.tvremote.agent.transport.ws.ReplayWindow
+import dev.tvremote.agent.transport.ws.WsFrameCodec
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.io.IOException
+import java.security.SecureRandom
+
+/**
+ * WS 调试通道客户端（对端：agent 明文 WS 端口 47833）。
+ * 安全模型与 agent 端 WebSocketDebugServer 对齐：
+ * 明文 WS + 应用层端到端加密（HKDF+AES-GCM+防重放）。
+ */
+class WsDebugClient(
+    host: String,
+    private val controllerId: String,
+    private val secret: ByteArray,
+    port: Int = DEBUG_PORT,
+) : AutoCloseable {
+    private val socket = Socket()
+    private val replay = ReplayWindow(64)
+    private val random = SecureRandom()
+    private var serverCipher: DebugSessionCrypto.DirectionCipher? = null
+    private var clientCipher: DebugSessionCrypto.DirectionCipher? = null
+    private var serverCounter = 0L
+    private var outboundSequence = 0L
+    private val writeLock = Any()
+    private val heartbeat = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "tvrc-ws-heartbeat").apply { isDaemon = true }
+    }
+
+    init {
+        socket.tcpNoDelay = true
+        socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+        socket.soTimeout = READ_TIMEOUT_MS
+        upgrade()
+        val clientRandom = DebugSessionCrypto.randomBytes(DebugSessionCrypto.RANDOM_BYTES)
+        val hello = ProtocolCodec.encode(
+            ProtocolEnvelope(
+                protocolVersion = ProtocolCodec.VERSION,
+                requestId = nextRequestId(),
+                sessionId = "",
+                sequence = 1,
+                type = "ws_hello",
+                payload = jsonObject(
+                    "controllerId" to jsonString(controllerId),
+                    "clientRandom" to jsonString(Hex.encode(clientRandom)),
+                ),
+            ),
+        )
+        WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_TEXT, hello)
+        val ackFrame = WsFrameCodec.read(socket.inputStream, expectMasked = false) ?: throw IOException("closed during hello")
+        val ack = ProtocolCodec.decode(ackFrame.payload)
+        if (ack.type != "ws_hello_ack") throw IOException("unexpected handshake reply: ${ack.type}")
+        val serverRandom = Hex.decode(ack.payload.requireString("serverRandom", 64))
+        val keys = DebugSessionCrypto.deriveSessionKeys(secret, clientRandom, serverRandom)
+        clientCipher = DebugSessionCrypto.DirectionCipher(keys.clientToServer)
+        serverCipher = DebugSessionCrypto.DirectionCipher(keys.serverToClient)
+        // 15s 加密保活：agent 对 client 的 ping 不回 ack（handleEncryptedMessage ack=null），
+        // 等待 ack 必然 45s 读超时——fire-and-forget 只写不读；写侧与命令共享 io 互斥。
+        // 收到的服务端加密 ping 由命令读循环消化（type=ping continue）。
+        heartbeat.scheduleWithFixedDelay({
+            try {
+                synchronized(writeLock) {
+                    val cipher = clientCipher ?: return@synchronized
+                    val ping = ProtocolCodec.encode(
+                        ProtocolEnvelope(
+                            protocolVersion = ProtocolCodec.VERSION,
+                            requestId = nextRequestId(),
+                            sessionId = controllerId,
+                            sequence = 0,
+                            type = "ping",
+                            payload = jsonObject(),
+                        ),
+                    )
+                    WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_BINARY, cipher.seal(ping))
+                }
+            } catch (_: Exception) {
+                runCatching { close() }
+            }
+        }, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    fun sendKeyEvent(key: String, state: String, repeatCount: Int = 0): Boolean {
+        val ack = sendCommand(
+            "key_event",
+            jsonObject(
+                "key" to jsonString(key),
+                "state" to jsonString(state),
+                "repeatCount" to jsonLong(repeatCount.toLong()),
+            ),
+        )
+        return ack.status == "SUCCESS"
+    }
+
+    fun sendText(text: String, draft: Boolean): Boolean {
+        val ack = sendCommand(if (draft) "text_draft" else "text_commit", jsonObject("text" to jsonString(text)))
+        return ack.status == "SUCCESS"
+    }
+
+    /**
+     * 全函数互斥（writeLock 同时覆盖出向写与入向读循环）：
+     * 15s 心跳跑在调度线程，UI 在调用线程——二者并发时若读循环不加锁，
+     * 心跳可能吃掉命令的 ack（type=ping continue 后死等直至 45s 读超时断连）。
+     * 串行化代价：并发调用最多等待一次心跳往返（毫秒级）。
+     */
+    private fun sendCommand(type: String, payload: JsonValue.ObjectValue): Ack = synchronized(writeLock) {
+        // agent 端 KeyStateTracker/TextCommandDispatcher 要求命令序号严格递增（首个成功后
+        // sequence<=last 全部 REJECTED）——信封必须携带递增值
+        val message = ProtocolCodec.encode(
+            ProtocolEnvelope(
+                protocolVersion = ProtocolCodec.VERSION,
+                requestId = nextRequestId(),
+                sessionId = controllerId,
+                sequence = ++outboundSequence,
+                type = type,
+                payload = payload,
+            ),
+        )
+        val cipher = clientCipher ?: throw IllegalStateException("not ready")
+        val sealed = cipher.seal(message)
+        WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_BINARY, sealed)
+        while (true) {
+            val frame = WsFrameCodec.read(socket.inputStream, expectMasked = false) ?: throw IOException("connection closed")
+            if (frame.opcode == WsFrameCodec.OPCODE_PING) {
+                // 客户端→服务端方向必须掩码（服务端硬校验）；writePong 是服务端出向帧
+                WsFrameCodec.writeClient(socket.outputStream, WsFrameCodec.OPCODE_PONG, frame.payload)
+                continue
+            }
+            if (frame.opcode != WsFrameCodec.OPCODE_BINARY) continue
+            val replyCounter = DebugSessionCrypto.DirectionCipher.readCounter(frame.payload)
+            if (!replay.checkAndAccept(replyCounter)) throw IOException("replayed debug message")
+            val plaintext = (serverCipher ?: throw IllegalStateException("not ready"))
+                .open(frame.payload, replyCounter)
+            val reply = ProtocolCodec.decode(plaintext)
+            if (reply.type == "ping") continue
+            if (reply.type != "command_ack") continue
+            return Ack(
+                reply.payload.requireLong("commandSequence"),
+                reply.payload.requireString("status", 32),
+            )
+        }
+        error("unreachable: read loop exits only via return/throw")
+    }
+
+    /** HTTP 升级握手（Sec-WebSocket-Key = 随机 16B base64）。 */
+    private fun upgrade() {
+        val keyBytes = ByteArray(16).also(random::nextBytes)
+        val key = dev.tvremote.agent.transport.ws.Base64.encode(keyBytes, withPadding = false)
+        val request = (
+            "GET / HTTP/1.1\r\n" +
+                "Host: ${socket.inetAddress.hostAddress}\r\n" +
+                "Upgrade: websocket\r\n" +
+                "Connection: Upgrade\r\n" +
+                "Sec-WebSocket-Key: $key\r\n" +
+                "Sec-WebSocket-Version: 13\r\n\r\n"
+            )
+        socket.outputStream.write(request.toByteArray(Charsets.US_ASCII))
+        socket.outputStream.flush()
+        val reader = BufferedReader(InputStreamReader(socket.inputStream, Charsets.US_ASCII))
+        val status = reader.readLine() ?: throw IOException("no handshake response")
+        if (!status.contains("101")) throw IOException("handshake rejected: $status")
+        while (true) {
+            val line = reader.readLine() ?: throw IOException("truncated handshake")
+            if (line.isEmpty()) break
+        }
+    }
+
+    private fun nextRequestId(): String = "c-${System.nanoTime()}"
+
+    override fun close() {
+        heartbeat.shutdownNow()
+        runCatching { socket.close() }
+    }
+
+    data class Ack(val sequence: Long, val status: String) {
+        val isSuccess: Boolean get() = status == "SUCCESS"
+    }
+
+    companion object {
+        const val DEBUG_PORT = 47833
+        private const val CONNECT_TIMEOUT_MS = 10_000
+        private const val HEARTBEAT_INTERVAL_MS = 15_000L
+        private const val READ_TIMEOUT_MS = 45_000
+    }
+}

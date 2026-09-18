@@ -61,12 +61,12 @@
 
     <!-- pairing -->
     <string name="screen_pairing">配对电视机</string>
-    <string name="pairing_input_hint">在电视上开启配对，输入电视显示的六位配对码。</string>
+    <string name="pairing_input_hint">请输入电视屏幕上显示的六位配对码。</string>
     <string name="field_pairing_code">六位配对码</string>
     <string name="action_connect_pair">连接并配对</string>
     <string name="pairing_qr_started">已读取二维码，正在向电视发起配对…</string>
-    <string name="pairing_sas_prompt">请在电视上核对安全码（SAS）并确认：</string>
-    <string name="pairing_sas_hint">电视端确认后会自动继续。若不一致，请立即取消并检查网络。</string>
+    <string name="pairing_sas_prompt">请核对本机与电视显示的安全码（SAS）是否一致：</string>
+    <string name="pairing_sas_hint">核对一致后，请在电视上点「一致，允许」；若不一致，请立即取消并检查网络。</string>
     <string name="action_cancel_pairing">取消配对</string>
     <string name="pairing_completing">正在保存凭据并完成配对…</string>
     <string name="pairing_finished">配对流程已结束</string>

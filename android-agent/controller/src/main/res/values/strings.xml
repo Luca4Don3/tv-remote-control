@@ -61,12 +61,12 @@
 
     <!-- pairing -->
     <string name="screen_pairing">Pair with TV</string>
-    <string name="pairing_input_hint">Enable pairing on the TV, then enter the 6-digit code shown.</string>
+    <string name="pairing_input_hint">Enter the 6-digit code shown on the TV.</string>
     <string name="field_pairing_code">6-digit pairing code</string>
     <string name="action_connect_pair">Connect and pair</string>
     <string name="pairing_qr_started">QR read. Starting pairing…</string>
-    <string name="pairing_sas_prompt">Verify the security code (SAS) on the TV:</string>
-    <string name="pairing_sas_hint">Pairing continues after you confirm on the TV. If it does not match, cancel and check the network.</string>
+    <string name="pairing_sas_prompt">Confirm both devices show the same security code (SAS):</string>
+    <string name="pairing_sas_hint">If they match, tap "Allow" on the TV. If not, cancel and check the network.</string>
     <string name="action_cancel_pairing">Cancel pairing</string>
     <string name="pairing_completing">Saving credential and finishing pairing…</string>
     <string name="pairing_finished">Pairing flow ended</string>

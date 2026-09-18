@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tvrc_bg">#0F1218</color>
+    <color name="tvrc_surface">#1A1F2B</color>
+    <color name="tvrc_surface_variant">#232A38</color>
+    <color name="tvrc_outline">#323B4D</color>
+    <color name="tvrc_primary">#4F8CFF</color>
+    <color name="tvrc_primary_focused">#7FB0FF</color>
+    <color name="tvrc_surface_focused">#2E3A52</color>
+    <color name="tvrc_primary_container">#22345C</color>
+    <color name="tvrc_on_primary">#FFFFFF</color>
+    <color name="tvrc_on_surface">#E6EAF2</color>
+    <color name="tvrc_muted">#93A0B5</color>
+    <color name="tvrc_success">#3DDC84</color>
+    <color name="tvrc_warning">#F2B84B</color>
+    <color name="tvrc_error">#FF6B6B</color>
+    <color name="tvrc_focus_overlay">#33FFFFFF</color>
+    <color name="tvrc_white">#FFFFFFFF</color>
+    <color name="tvrc_black">#FF000000</color>
+</resources>

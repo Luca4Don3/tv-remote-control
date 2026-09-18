@@ -15,11 +15,11 @@ val productVersionCode = stableVersionParts[0] * 1_000_000 + stableVersionParts[
 val cameraxVersion = "1.3.4"
 
 android {
-    namespace = "dev.lucasdone.tvremote.controller"
+    namespace = "dev.tvremote.controller"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "dev.lucasdone.tvremote.controller"
+        applicationId = "dev.tvremote.controller"
         // 兼容 Android 5.0+（Compose/Material3/CameraX 的技术下限为 API 21）
         minSdk = 21
         targetSdk = 36

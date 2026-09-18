@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "dev.lucasdone.tvremote.agent.protocol.core"
+    namespace = "dev.tvremote.agent.protocol.core"
     compileSdk = 36
 
     defaultConfig {

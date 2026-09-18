@@ -1,5 +1,41 @@
 <resources>
-    <string name="app_name">TV Remote Agent</string>
+    <string name="app_name">电视遥控</string>
+    <string name="ime_name">手机遥控输入法</string>
     <string name="accessibility_description">允许已认证的控制端执行返回、主页等受支持的电视操作。</string>
     <string name="revoke_controller">撤销 %1$s</string>
+
+    <string name="qr_content_description">扫码配对二维码</string>
+    <string name="first_use_hint">首次使用：启动服务 → 手机配对 → 核对按键效果</string>
+
+    <string name="section_connection">连接</string>
+    <string name="section_pairing">手机配对</string>
+    <string name="section_media">屏幕共享</string>
+    <string name="section_ime">文字输入</string>
+    <string name="section_settings">设置</string>
+    <string name="section_diagnostics">诊断</string>
+
+    <string name="btn_start">启动服务</string>
+    <string name="btn_retry">重新尝试启动</string>
+    <string name="btn_refresh">重新检测本机接口</string>
+    <string name="btn_stop">停止服务</string>
+    <string name="btn_test_volume">测试音量加一档</string>
+    <string name="btn_open_pairing">开启两分钟配对窗口</string>
+    <string name="btn_media_action">响应屏幕共享请求</string>
+    <string name="btn_enable_ime">启用输入法</string>
+    <string name="btn_choose_ime">选择输入法</string>
+    <string name="btn_open_accessibility">打开无障碍设置</string>
+    <string name="btn_refresh_report">刷新能力报告</string>
+    <string name="btn_debug_credentials">查看调试凭据（仅开发环境）</string>
+    <string name="btn_switch_ime">切换输入法</string>
+
+    <string name="chk_adb">允许本机 ADB 备用（默认关闭）</string>
+    <string name="chk_boot">开机启动遥控服务</string>
+
+    <string name="controllers_title">已配对控制端</string>
+    <string name="media_drm_hint">提示：受 DRM/HDCP 保护的内容可能显示黑屏；本应用不会检测或绕过内容保护。</string>
+    <string name="ime_hint">在手机打字后发送。电视需选中“手机遥控输入法”，并把焦点移到搜索框。</string>
+    <string name="ime_view_hint">在手机输入文字后发送</string>
+
+    <string name="chevron_collapsed">▾</string>
+    <string name="chevron_expanded">▸</string>
 </resources>

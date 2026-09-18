@@ -1,1 +1,2 @@
--keep class dev.lucasdone.tvremote.agent.model.** { *; }
+-keep class dev.tvremote.agent.model.** { *; }
+-dontwarn java.nio.file.**
