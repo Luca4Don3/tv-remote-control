@@ -165,4 +165,5 @@
     <string name="ack_failed">%1$s failed</string>
     <string name="ack_failed_reason">%1$s failed: %2$s</string>
     <string name="ack_status">%1$s %2$s</string>
+    <string name="remote_tv_unreachable_hint">If the TV app was closed or stopped by the system, open it on the TV, then tap Retry.</string>
 </resources>

@@ -40,6 +40,7 @@ import dev.tvremote.controller.capability.KeySupport
 import dev.tvremote.controller.capability.TextSupport
 import dev.tvremote.controller.session.ControllerSession
 import dev.tvremote.controller.ui.ConnectionPhase
+import dev.tvremote.controller.ui.FailureKind
 import dev.tvremote.controller.ui.ControllerUiState
 import dev.tvremote.controller.ui.ControllerViewModel
 import dev.tvremote.controller.ui.NoticeBanner
@@ -112,6 +113,14 @@ private fun ConnectionFailurePanel(state: ControllerUiState, viewModel: Controll
             color = MaterialTheme.colorScheme.error,
             fontSize = 14.sp,
         )
+        if (failure?.kind == FailureKind.NETWORK) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                stringResource(R.string.remote_tv_unreachable_hint),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+            )
+        }
         Spacer(Modifier.height(16.dp))
         if (supportsRetry) {
             state.activeDeviceId?.let { id ->

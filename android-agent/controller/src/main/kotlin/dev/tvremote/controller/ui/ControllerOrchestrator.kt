@@ -70,6 +70,7 @@ class ControllerOrchestrator(
     private var userDisconnected = false
     private var reconnectJob: Job? = null
     private var reconcileJob: Job? = null
+    private var reconnectCycles = 0
     private var discoveryGeneration = 0
 
     private data class ConnectTarget(val token: Int, val deviceId: String)
@@ -205,6 +206,7 @@ class ControllerOrchestrator(
 
     fun selectDevice(deviceId: String) {
         userDisconnected = false
+        reconnectCycles = 0
         _state.update { it.copy(failure = null) }
         connect(deviceId, auto = false)
     }
@@ -310,6 +312,7 @@ class ControllerOrchestrator(
             return
         }
         userDisconnected = false
+        reconnectCycles = 0
         connect(deviceId, auto = false, hostOverride = trimmed, portOverride = port)
     }
 
@@ -403,6 +406,7 @@ class ControllerOrchestrator(
                         registry.clear(token, result.first)
                         bindSession(result.first)
                         handedOff = true
+                        reconnectCycles = 0
                         _state.update {
                             it.copy(connection = ConnectionPhase.CONNECTED, failure = null, capabilities = result.second)
                         }
@@ -421,6 +425,8 @@ class ControllerOrchestrator(
                         }
                         _state.update { it.copy(connection = ConnectionPhase.FAILED, failure = failure) }
                         applyDevices()
+                        // 有界持续重连：电视端应用被系统停止后，重新打开即可自动恢复
+                        if (auto && failure.retryable) scheduleReconnect()
                         return@launch
                     }
                 }
@@ -717,6 +723,7 @@ class ControllerOrchestrator(
     fun openRemote() {
         val state = _state.value
         val activeId = state.activeDeviceId
+        reconnectCycles = 0
         if (state.connection == ConnectionPhase.CONNECTED && activeId != null) {
             userDisconnected = false
             _state.update { it.copy(screen = Screen.REMOTE) }
@@ -874,6 +881,7 @@ class ControllerOrchestrator(
     /** R6：运行中断线的有界自动重连（仅前台、非用户断开、DEVICES/REMOTE、非配对中）。 */
     private fun scheduleReconnect() {
         if (!foreground || userDisconnected) return
+        if (reconnectCycles >= MAX_RECONNECT_CYCLES) return
         val deviceId = _state.value.activeDeviceId ?: return
         val token = currentGeneration()
         reconnectJob?.cancel()
@@ -883,6 +891,7 @@ class ControllerOrchestrator(
             if (_state.value.pairing != null) return@launch
             val screen = _state.value.screen
             if (screen != Screen.DEVICES && screen != Screen.REMOTE) return@launch
+            reconnectCycles += 1
             connect(deviceId, auto = true)
         }
     }
@@ -937,5 +946,6 @@ class ControllerOrchestrator(
 
     companion object {
         const val CONTROLLER_NAME = "Android Phone"
+        private const val MAX_RECONNECT_CYCLES = 12
     }
 }

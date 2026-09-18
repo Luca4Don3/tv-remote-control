@@ -165,4 +165,5 @@
     <string name="ack_failed">%1$s 执行失败</string>
     <string name="ack_failed_reason">%1$s 执行失败：%2$s</string>
     <string name="ack_status">%1$s %2$s</string>
+    <string name="remote_tv_unreachable_hint">若电视端应用已退出或被系统停止，请在电视上重新打开本应用，再点“重试”。</string>
 </resources>
