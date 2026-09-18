@@ -96,6 +96,7 @@ fun DeviceListScreen(state: ControllerUiState, viewModel: ControllerViewModel) {
                         connected = device.id == state.activeDeviceId && state.connected,
                         isActive = state.activeDeviceId == device.id,
                         onConnect = { viewModel.selectDevice(device.id) },
+                        onOpenRemote = { viewModel.openRemote() },
                         onRename = { renameTarget = device.id },
                         onForget = { forgetTarget = device.id },
                         onChangeAddress = { addressTarget = device.id },
@@ -165,6 +166,7 @@ private fun DeviceCard(
     connected: Boolean,
     isActive: Boolean,
     onConnect: () -> Unit,
+    onOpenRemote: () -> Unit,
     onRename: () -> Unit,
     onForget: () -> Unit,
     onChangeAddress: () -> Unit,
@@ -199,7 +201,11 @@ private fun DeviceCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Button(onClick = onConnect, enabled = !connected) { Text(stringResource(R.string.action_connect)) }
+                if (isActive && connected) {
+                    Button(onClick = onOpenRemote) { Text(stringResource(R.string.action_open_remote)) }
+                } else {
+                    Button(onClick = onConnect, enabled = !connected) { Text(stringResource(R.string.action_connect)) }
+                }
                 OutlinedButton(onClick = onRename) { Text(stringResource(R.string.action_rename)) }
                 OutlinedButton(onClick = onChangeAddress) { Text(stringResource(R.string.action_change_address)) }
                 OutlinedButton(onClick = onForget) { Text(stringResource(R.string.action_forget)) }

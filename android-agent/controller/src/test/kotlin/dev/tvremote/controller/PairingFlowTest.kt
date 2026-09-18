@@ -42,10 +42,15 @@ class PairingFlowTest {
         var promoted = false
         var discarded = false
 
+        var ackAttempted = false
         override fun load() = DeviceLoad(listOfNotNull(active))
         override fun find(id: String): StoredDevice? = active?.takeIf { it.id == id }
         override fun save(device: StoredDevice) { active = device }
-        override fun savePending(device: StoredDevice) { pending = device }
+        override fun savePending(device: StoredDevice) {
+            pending = device
+            ackAttempted = false
+        }
+        override fun markPendingAckAttempted(id: String) { ackAttempted = true }
         override fun promotePending(id: String) {
             promoted = true
             active = pending
@@ -103,9 +108,10 @@ class PairingFlowTest {
         assertNull(store.pending)
     }
 
+    /** R2：ACK 已尝试发送后 pair_complete 丢失 → pending 保留（电视可能已激活），旧有效记录不被覆盖。 */
     @Test
-    fun confirmFailureKeepsExistingActiveAndDiscardsPending() {
-        // 空脚本：等待 pair_complete 时连接关闭 → 确认失败
+    fun confirmFailureAfterAckKeepsPendingAndExistingActive() {
+        // 空脚本：ACK 发送成功但等待 pair_complete 时连接关闭
         val store = FakeStore(oldDevice())
         val session = ControllerSession(connectionFactory = { _ -> ScriptedTransport(fingerprint, ArrayDeque()) })
 
@@ -123,7 +129,8 @@ class PairingFlowTest {
         }.isFailure
 
         assertTrue(failed)
-        assertTrue(store.discarded)
+        assertTrue("ACK 已尝试发送，必须保留 pending", store.ackAttempted)
+        assertFalse("不得丢弃待确认凭据", store.discarded)
         assertFalse(store.promoted)
         assertEquals("旧有效凭据必须保留", "Old", store.active?.displayName)
     }

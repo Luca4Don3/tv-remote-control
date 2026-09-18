@@ -154,8 +154,11 @@ class ControllerSession(
     private fun pairingReadTimeoutMs(): Int =
         (pairingExpiresInMs + 5_000L).coerceIn(READ_TIMEOUT_MS.toLong(), MAX_PAIRING_WAIT_MS.toLong()).toInt()
 
-    /** 凭据已成功持久化后：回 `pair_store_ack` 并确认 `pair_complete`。 */
-    fun confirmCredentialStored(credential: PairingCredential) = synchronized(ioLock) {
+    /**
+     * 发送 `pair_store_ack`。与 [awaitPairComplete] 分开：调用方需在发送前持久化
+     * 「已尝试发送」，以便 ACK 之后任何失败都保留待确认凭据（电视可能已激活）。
+     */
+    fun sendPairStoreAck(credential: PairingCredential) = synchronized(ioLock) {
         val transport = activeConnection()
         transport.send(
             requestId = transport.nextRequestId(),
@@ -166,6 +169,10 @@ class ControllerSession(
                 "controllerId" to jsonString(credential.controllerId),
             ),
         )
+    }
+
+    /** 等待并校验 `pair_complete`。 */
+    fun awaitPairComplete(credential: PairingCredential) = synchronized(ioLock) {
         val complete = receiveExpect(setOf("pair_complete"))
         if (complete.payload.requireString("controllerId", 32) != credential.controllerId) {
             throw PairingRejectedException("pair_complete controller id mismatch")

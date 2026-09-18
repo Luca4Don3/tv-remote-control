@@ -8,6 +8,7 @@
     <string name="action_cancel">Cancel</string>
     <string name="action_save">Save</string>
     <string name="action_connect">Connect</string>
+    <string name="action_open_remote">Open remote</string>
     <string name="action_rename">Rename</string>
     <string name="action_change_address">Change address</string>
     <string name="dialog_change_address_title">Change TV address</string>

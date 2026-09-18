@@ -38,11 +38,15 @@ object PairingFlow {
         )
         store.savePending(device)
         try {
-            session.confirmCredentialStored(credential)
+            // 发送 ACK 之前先落盘「已尝试发送」：确保任何后续失败都保留待确认凭据
+            store.markPendingAckAttempted(fingerprintHex)
         } catch (error: Exception) {
             runCatching { store.discardPending(fingerprintHex) }
             throw error
         }
+        // 从此刻起不再丢弃 pending（ACK 可能已送达电视并激活凭据）
+        session.sendPairStoreAck(credential)
+        session.awaitPairComplete(credential)
         store.promotePending(fingerprintHex)
     }
 }
