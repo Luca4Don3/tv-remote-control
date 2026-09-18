@@ -217,6 +217,7 @@ class ControlServer(
                 }
                 socket.soTimeout = TLS_HANDSHAKE_TIMEOUT_MS
                 TlsPolicy.configure(socket)
+                socket.tcpNoDelay = true
                 openSockets.add(socket)
                 try {
                     workers.execute { handleSocket(socket) }

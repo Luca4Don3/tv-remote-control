@@ -101,15 +101,20 @@ class KeyRepeatController(
             if (!down.isSuccess) continue
             synchronized(this) { pressed.add(key) }
 
-            // 重复阶段：等待间隔或 Release；超时则发 REPEAT
+            // 重复阶段：时间驱动——从「上次发送」起按 intervalMs 计，扣除 ack 往返，
+            // 避免把网络往返叠加到重复节奏上（抖动链路下长按会明显变慢）。
             var repeatCount = 1
+            var carryOverMs = 0L
             while (true) {
-                val waitMs = if (repeatCount == 1) initialDelayMs else intervalMs
+                val interval = if (repeatCount == 1) initialDelayMs else intervalMs
+                val waitMs = (interval - carryOverMs).coerceAtLeast(0L)
                 val next = withTimeoutOrNull(waitMs) { channel.receiveCatching().getOrNull() }
                 if (next is Command.Release) break
                 if (next == null) {
                     // 超时（或通道关闭）：发送一次重复
+                    val repeatStart = System.nanoTime()
                     val ack = sender(key, "REPEAT", repeatCount)
+                    carryOverMs = (System.nanoTime() - repeatStart) / 1_000_000
                     if (!ack.isSuccess) {
                         onAck(key, ack)
                         break // REPEAT 失败：结束本次按下并释放
