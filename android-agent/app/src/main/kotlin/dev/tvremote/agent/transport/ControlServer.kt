@@ -478,6 +478,21 @@ class ControlServer(
         val dispatcher = dispatcherFactory()
         val textDispatcher = textDispatcherFactory()
         val activeConnection = ActiveConnection(socket, connection, controllerId, session.sessionId, dispatcher, textDispatcher)
+        // 同一控制端重连时旧会话可能仍是半开的：接管而不是回 BUSY。
+        // 控制器把 BUSY 视为不可重试，否则一次偶发断线后就再也连不上。
+        val previous = active.get()
+        if (previous != null && previous.controllerId != controllerId) {
+            sessionManager.revokeSession(session.sessionId)
+            sendError(connection, responseMessage, "BUSY", "another controller is active")
+            return
+        }
+        if (previous != null && active.compareAndSet(previous, null)) {
+            Log.i(TAG, "Same controller reconnected; previous session taken over")
+            mediaCoordinator.stopSession(previous.sessionId)
+            previous.dispatcher.disconnect()
+            sessionManager.revokeSession(previous.sessionId)
+            runCatching { previous.socket.close() }
+        }
         if (!active.compareAndSet(null, activeConnection)) {
             sessionManager.revokeSession(session.sessionId)
             sendError(connection, responseMessage, "BUSY", "another controller is active")

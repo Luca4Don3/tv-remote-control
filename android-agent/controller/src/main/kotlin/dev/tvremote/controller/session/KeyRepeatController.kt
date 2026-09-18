@@ -101,27 +101,26 @@ class KeyRepeatController(
             if (!down.isSuccess) continue
             synchronized(this) { pressed.add(key) }
 
-            // 重复阶段：时间驱动——从「上次发送」起按 intervalMs 计，扣除 ack 往返，
-            // 避免把网络往返叠加到重复节奏上（抖动链路下长按会明显变慢）。
+            // 重复阶段：时间驱动。每轮先非阻塞消费松手——即使定时已到期也必须先释放；
+            // 再按「上次发送 + intervalMs」的剩余时间等待；ack 慢时跳过错过的周期，不补发。
             var repeatCount = 1
-            var carryOverMs = 0L
+            var nextRepeatAtMs = elapsedMs() + initialDelayMs
             while (true) {
-                val interval = if (repeatCount == 1) initialDelayMs else intervalMs
-                val waitMs = (interval - carryOverMs).coerceAtLeast(0L)
-                val next = withTimeoutOrNull(waitMs) { channel.receiveCatching().getOrNull() }
-                if (next is Command.Release) break
-                if (next == null) {
-                    // 超时（或通道关闭）：发送一次重复
-                    val repeatStart = System.nanoTime()
-                    val ack = sender(key, "REPEAT", repeatCount)
-                    carryOverMs = (System.nanoTime() - repeatStart) / 1_000_000
-                    if (!ack.isSuccess) {
-                        onAck(key, ack)
-                        break // REPEAT 失败：结束本次按下并释放
-                    }
-                    repeatCount += 1
+                if (channel.tryReceive().getOrNull() is Command.Release) break
+                val waitMs = nextRepeatAtMs - elapsedMs()
+                if (waitMs > 0L) {
+                    val next = withTimeoutOrNull(waitMs) { channel.receiveCatching().getOrNull() }
+                    if (next is Command.Release) break
+                    // next 为 Press 或超时(null)：进入本次 REPEAT
                 }
-                // next 为 Press（理论上持有期间不会出现）：忽略，继续重复
+                val sentAtMs = elapsedMs()
+                val ack = sender(key, "REPEAT", repeatCount)
+                if (!ack.isSuccess) {
+                    onAck(key, ack)
+                    break // REPEAT 失败：结束本次按下并释放
+                }
+                repeatCount += 1
+                nextRepeatAtMs = sentAtMs + intervalMs
             }
 
             if (synchronized(this) { pressed.remove(key) }) {
@@ -129,4 +128,6 @@ class KeyRepeatController(
             }
         }
     }
+
+    private fun elapsedMs(): Long = System.nanoTime() / 1_000_000L
 }

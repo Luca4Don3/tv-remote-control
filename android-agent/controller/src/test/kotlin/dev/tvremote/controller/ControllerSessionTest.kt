@@ -365,6 +365,50 @@ class ControllerSessionTest {
         }
     }
 
+    /** 半开链路：保活探测读不到 pong 时必须主动关闭会话并回调。 */
+    @Test
+    fun keepaliveProbeClosesHalfOpenConnection() {
+        val script = ArrayDeque<ProtocolEnvelope>()
+        val transport = ScriptedTransport(fingerprint, script)
+        val closed = java.util.concurrent.CountDownLatch(1)
+        val session = ControllerSession(
+            connectionFactory = { _ -> transport },
+            random = deterministicRandom(),
+            keepaliveIntervalMs = 30L,
+            onUnexpectedClose = { closed.countDown() },
+        )
+        script += envelope(
+            "auth_challenge",
+            jsonObject(
+                "challengeId" to jsonString("c-1"),
+                "serverNonce" to jsonString(Hex.encode(ByteArray(32) { 1 })),
+                "expiresInMs" to jsonLong(30_000),
+            ),
+            requestId = "c-1",
+        )
+        script += envelope(
+            "auth_complete",
+            jsonObject(
+                "sessionId" to jsonString("sess-1"),
+                "expiresInMs" to jsonLong(900_000),
+                "capabilities" to jsonObject(
+                    "textInput" to jsonString("SUPPORTED"),
+                    "keySupport" to jsonObject(),
+                ),
+            ),
+            requestId = "c-2",
+        )
+        try {
+            session.authenticate("ab".repeat(16), ByteArray(32) { 1 }, fingerprint)
+            assertTrue(
+                "保活探测应发现半死链路并关闭会话",
+                closed.await(5, java.util.concurrent.TimeUnit.SECONDS),
+            )
+        } finally {
+            session.close()
+        }
+    }
+
     private class RecordingStore : CredentialStore {
         val saved = mutableListOf<StoredDevice>()
         override fun load() = DeviceLoad(saved.toList())

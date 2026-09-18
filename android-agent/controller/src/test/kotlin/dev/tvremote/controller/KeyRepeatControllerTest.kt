@@ -247,4 +247,30 @@ class KeyRepeatControllerTest {
             controller.stopAll()
         }
     }
+
+    /** 回归：ack 往返 ≥ intervalMs 时，松手也必须立即停止重复并补发 UP。 */
+    @Test
+    fun releaseIsHonoredWhenAckSlowerThanInterval() = runBlocking {
+        val events = mutableListOf<String>()
+        val controller = KeyRepeatController(
+            scope = this,
+            sender = { _, state, _ ->
+                if (state == "REPEAT") delay(200)
+                events += state
+                success()
+            },
+            initialDelayMs = 20,
+            intervalMs = 20,
+        )
+        try {
+            controller.begin("DPAD_UP")
+            delay(150)
+            controller.end("DPAD_UP")
+            delay(700)
+            assertEquals("UP", events.last())
+            assertFalse(controller.isRepeating("DPAD_UP"))
+        } finally {
+            controller.stopAll()
+        }
+    }
 }

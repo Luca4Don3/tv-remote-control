@@ -363,6 +363,18 @@ class ControllerSession(
         }
     }
 
+    /** 保活探测：读到 pong 即视为存活；服务端 ping 立即回 pong，其余推送忽略。 */
+    private fun awaitPong(transport: ConnectionTransport) {
+        while (true) {
+            val message = transport.receive() ?: throw SessionClosedException("connection closed by TV")
+            when (message.type) {
+                "pong" -> return
+                "ping" -> replyPong(message)
+                else -> Unit
+            }
+        }
+    }
+
     /**
      * TLS 主链路保活：15s fire-and-forget ping（agent 对 client ping 回 pong，
      * 空闲 45s 会被服务端断连）。写侧与命令共享 socket，由 TvConnection.send 串行化。
@@ -376,10 +388,24 @@ class ControllerSession(
             }
             keepalive = scheduler
             scheduler.scheduleWithFixedDelay({
-                val transport = connection
-                if (transport == null || closed.get() || sessionId.isEmpty()) return@scheduleWithFixedDelay
+                if (closed.get()) return@scheduleWithFixedDelay
+                val transport = connection ?: return@scheduleWithFixedDelay
+                if (sessionId.isEmpty()) return@scheduleWithFixedDelay
                 try {
-                    transport.send(transport.nextRequestId(), sessionId, "ping", jsonObject())
+                    // 探测式保活：写 ping 且读到 pong 才算活。只写不读会让半开链路
+                    // 一直“看起来正常”，直到某次按键卡满读超时才暴露。
+                    synchronized(ioLock) {
+                        if (closed.get() || connection !== transport || sessionId.isEmpty()) {
+                            return@synchronized
+                        }
+                        transport.setReadTimeout(KEEPALIVE_PROBE_TIMEOUT_MS)
+                        try {
+                            transport.send(transport.nextRequestId(), sessionId, "ping", jsonObject())
+                            awaitPong(transport)
+                        } finally {
+                            transport.setReadTimeout(READ_TIMEOUT_MS)
+                        }
+                    }
                 } catch (_: Exception) {
                     // 仅当本次由保活失败真正触发关闭时才通知；主动关闭（closed 已置位）不回调
                     if (closeInternal()) runCatching { onUnexpectedClose?.invoke() }
@@ -426,6 +452,7 @@ class ControllerSession(
         const val KEEPALIVE_INTERVAL_MS = 15_000L
         const val MAX_TEXT_CHARS = 4_096
         private const val READ_TIMEOUT_MS = 45_000
+        private const val KEEPALIVE_PROBE_TIMEOUT_MS = 5_000
         private const val DISCONNECT_ACK_TIMEOUT_MS = 3_000
         private const val MAX_PAIRING_WAIT_MS = 130_000L
         private val CONTROLLER_ID = Regex("[0-9a-f]{32}")
