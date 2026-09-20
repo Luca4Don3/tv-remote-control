@@ -137,7 +137,8 @@ export class DebugWsSession {
         protocolVersion: PROTOCOL_VERSION,
         requestId: this.nextRequestId(),
         sessionId: this.controllerId,
-        sequence: 0n,
+        // 心跳与命令共享同一递增序号：服务端拒绝 sequence<=0，命令层要求严格递增
+        sequence: ++this.outboundSequence,
         type: "ping",
         payload: {},
       };

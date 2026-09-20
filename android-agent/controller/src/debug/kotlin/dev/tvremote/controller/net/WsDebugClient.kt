@@ -24,12 +24,20 @@ import java.security.SecureRandom
  * 安全模型与 agent 端 WebSocketDebugServer 对齐：
  * 明文 WS + 应用层端到端加密（HKDF+AES-GCM+防重放）。
  */
-class WsDebugClient(
+class WsDebugClient internal constructor(
     host: String,
     private val controllerId: String,
     private val secret: ByteArray,
-    port: Int = DEBUG_PORT,
+    port: Int,
+    private val heartbeatIntervalMs: Long,
 ) : AutoCloseable {
+    constructor(
+        host: String,
+        controllerId: String,
+        secret: ByteArray,
+        port: Int = DEBUG_PORT,
+    ) : this(host, controllerId, secret, port, HEARTBEAT_INTERVAL_MS)
+
     private val socket = Socket()
     private val replay = ReplayWindow(64)
     private val random = SecureRandom()
@@ -81,7 +89,9 @@ class WsDebugClient(
                             protocolVersion = ProtocolCodec.VERSION,
                             requestId = nextRequestId(),
                             sessionId = controllerId,
-                            sequence = 0,
+                            // 心跳与命令共享同一递增序号：服务端 decode 拒绝 sequence<=0，
+                            // 且命令层要求严格递增。
+                            sequence = ++outboundSequence,
                             type = "ping",
                             payload = jsonObject(),
                         ),
@@ -91,7 +101,7 @@ class WsDebugClient(
             } catch (_: Exception) {
                 runCatching { close() }
             }
-        }, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        }, heartbeatIntervalMs, heartbeatIntervalMs, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     fun sendKeyEvent(key: String, state: String, repeatCount: Int = 0): Boolean {
@@ -180,6 +190,9 @@ class WsDebugClient(
     }
 
     private fun nextRequestId(): String = "c-${System.nanoTime()}"
+
+    /** 测试用：当前出向序号（心跳与命令共享，严格递增）。 */
+    internal fun outboundSequenceForTest(): Long = synchronized(writeLock) { outboundSequence }
 
     override fun close() {
         heartbeat.shutdownNow()
