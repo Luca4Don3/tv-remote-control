@@ -162,17 +162,24 @@ impl WsCodec {
         WsCodec { decoder: Mutex::new(decoder) }
     }
 
-    /// 喂入 TCP 字节片段，返回本次解出的完整消息（可能为空）。
+    /// 喂入 TCP 字节片段，返回本次输入中全部已完整的消息（可能为空）。
+    ///
+    /// `WsDecoder::push` 一次最多返回一条；这里以空输入继续排空同批已完整消息。
     pub fn push(&self, chunk: Vec<u8>) -> Result<Vec<WsFrame>, FfiError> {
         let mut decoder = self.decoder.lock().unwrap();
         let mut frames = Vec::new();
-        match decoder.push(&chunk) {
-            Ok(Some(msg)) => frames.push(wire(msg)),
-            Ok(None) => {}
-            Err(crate::ws::WsError::Closed) => {
-                frames.push(WsFrame { opcode: 8, payload: Vec::new() });
+        let mut next = decoder.push(&chunk);
+        loop {
+            match next {
+                Ok(Some(message)) => frames.push(wire(message)),
+                Ok(None) => break,
+                Err(crate::ws::WsError::Closed) => {
+                    frames.push(WsFrame { opcode: 8, payload: Vec::new() });
+                    break;
+                }
+                Err(error) => return Err(error.into()),
             }
-            Err(e) => return Err(e.into()),
+            next = decoder.push(&[]);
         }
         Ok(frames)
     }
@@ -198,5 +205,25 @@ fn wire(msg: crate::ws::WsMessage) -> WsFrame {
         crate::ws::WsMessage::Ping(p) => WsFrame { opcode: OPCODE_PING, payload: p },
         crate::ws::WsMessage::Pong(p) => WsFrame { opcode: OPCODE_PONG, payload: p },
         crate::ws::WsMessage::Close(_) => WsFrame { opcode: 8, payload: Vec::new() },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ws::{encode_client_frame, OPCODE_BINARY, OPCODE_TEXT};
+
+    #[test]
+    fn ws_codec_push_returns_all_complete_messages() {
+        let codec = WsCodec::with_role(WsCodecRole::Server);
+        let mask = [1u8, 2, 3, 4];
+        let mut chunk = encode_client_frame(OPCODE_TEXT, b"one", &mask).unwrap();
+        chunk.extend_from_slice(&encode_client_frame(OPCODE_BINARY, b"two", &mask).unwrap());
+        let frames = codec.push(chunk).unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].opcode, OPCODE_TEXT);
+        assert_eq!(frames[0].payload, b"one");
+        assert_eq!(frames[1].opcode, OPCODE_BINARY);
+        assert_eq!(frames[1].payload, b"two");
     }
 }

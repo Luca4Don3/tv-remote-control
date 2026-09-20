@@ -84,22 +84,36 @@ impl WsDecoder {
         }
     }
 
-    /// 喂数据；返回完成的消息（一次最多一条）。
+    /// 喂数据；返回完成的消息（一次最多返回一条）。
+    ///
+    /// 完整帧到齐前不消费缓存；消费非最终分片后继续检查已缓冲数据。
+    /// 同一输入可能含多条完整消息——调用方需以空输入继续排空
+    /// （FFI `WsCodec::push` 已内建该循环）。
     pub fn push(&mut self, chunk: &[u8]) -> Result<Option<WsMessage>, WsError> {
         self.buf.extend_from_slice(chunk);
-        self.try_decode()
+        loop {
+            let before = self.buf.len();
+            let message = self.try_decode()?;
+            if message.is_some() || self.buf.len() == before {
+                return Ok(message);
+            }
+            // 消费了非最终分片但还没产生消息，继续检查已缓存数据。
+        }
     }
 
     fn try_decode(&mut self) -> Result<Option<WsMessage>, WsError> {
-        let header = self.read_n(2)?;
-        let Some(header) = header else { return Ok(None) };
-        let fin = header[0] & 0x80 != 0;
-        let rsv = header[0] & 0x70;
-        if rsv != 0 {
+        // 先只读字节计算整帧边界；帧头/扩展长度/掩码/载荷未全部到齐前不得消费缓存。
+        if self.buf.len() < 2 {
+            return Ok(None);
+        }
+        let first = self.buf[0];
+        let second = self.buf[1];
+        let fin = first & 0x80 != 0;
+        if first & 0x70 != 0 {
             return Err(WsError::Protocol("reserved bits set".into()));
         }
-        let opcode = header[0] & 0x0F;
-        let masked = header[1] & 0x80 != 0;
+        let opcode = first & 0x0F;
+        let masked = second & 0x80 != 0;
         if masked != self.require_masked {
             return Err(WsError::Protocol(if self.require_masked {
                 "client frames must be masked".into()
@@ -107,51 +121,57 @@ impl WsDecoder {
                 "server frames must not be masked".into()
             }));
         }
-        let mut len = (header[1] & 0x7F) as usize;
-        if len == 126 {
-            let Some(ext) = self.read_n(2)? else { return Ok(None) };
-            len = u16::from_be_bytes([ext[0], ext[1]]) as usize;
-        } else if len == 127 {
-            let Some(ext) = self.read_n(8)? else { return Ok(None) };
-            let v = u64::from_be_bytes(ext.try_into().unwrap());
-            if v > MAX_WS_PAYLOAD as u64 {
-                return Err(WsError::TooLarge);
+        let (len, mask_start) = match second & 0x7F {
+            126 => {
+                if self.buf.len() < 4 {
+                    return Ok(None);
+                }
+                (u16::from_be_bytes([self.buf[2], self.buf[3]]) as u64, 4)
             }
-            len = v as usize;
-        }
-        if len > MAX_WS_PAYLOAD {
+            127 => {
+                if self.buf.len() < 10 {
+                    return Ok(None);
+                }
+                let mut bytes = [0u8; 8];
+                bytes.copy_from_slice(&self.buf[2..10]);
+                (u64::from_be_bytes(bytes), 10)
+            }
+            n => (u64::from(n), 2),
+        };
+        // 声明超限无需等待载荷到达即可拒绝。
+        if len > MAX_WS_PAYLOAD as u64 {
             return Err(WsError::TooLarge);
         }
-        // 仅掩码帧携带 4B 掩码键；未掩码帧（服务端出向）没有——无条件读会吞 payload
-        let mask = if masked {
-            let Some(m) = self.read_n(4)? else { return Ok(None) };
-            Some(m)
-        } else {
-            None
-        };
-        let Some(masked_payload) = self.read_n(len)? else { return Ok(None) };
-        let payload: Vec<u8> = match (masked, mask) {
-            (true, Some(mask)) => masked_payload
-                .iter()
-                .enumerate()
-                .map(|(i, b)| b ^ mask[i % 4])
-                .collect(),
-            _ => masked_payload,
-        };
+        // 仅掩码帧携带 4B 掩码键；未掩码帧（服务端出向）没有。
+        let payload_start = mask_start + if masked { 4 } else { 0 };
+        let frame_end = payload_start + len as usize;
+        if self.buf.len() < frame_end {
+            return Ok(None);
+        }
+
+        let mut payload = self.buf[payload_start..frame_end].to_vec();
+        if masked {
+            let mask = &self.buf[mask_start..payload_start];
+            for (index, byte) in payload.iter_mut().enumerate() {
+                *byte ^= mask[index % 4];
+            }
+        }
+        self.buf.drain(..frame_end);
 
         match opcode {
             OPCODE_CONT => {
-                let Some(first) = self.fragment_opcode else {
+                let Some(frag_opcode) = self.fragment_opcode else {
                     return Err(WsError::Protocol("continuation without start".into()));
                 };
-                self.fragments.extend_from_slice(&payload);
-                if self.fragments.len() > MAX_WS_PAYLOAD {
+                // 先检查累计长度，再追加。
+                if payload.len() > MAX_WS_PAYLOAD.saturating_sub(self.fragments.len()) {
                     return Err(WsError::TooLarge);
                 }
+                self.fragments.extend_from_slice(&payload);
                 if fin {
                     let data = std::mem::take(&mut self.fragments);
                     self.fragment_opcode = None;
-                    return self.assemble(first, data);
+                    return self.assemble(frag_opcode, data);
                 }
                 Ok(None)
             }
@@ -183,13 +203,6 @@ impl WsDecoder {
             OPCODE_BINARY => WsMessage::Binary(data),
             _ => unreachable!(),
         }))
-    }
-
-    fn read_n(&mut self, n: usize) -> Result<Option<Vec<u8>>, WsError> {
-        if self.buf.len() < n {
-            return Ok(None);
-        }
-        Ok(Some(self.buf.drain(..n).collect()))
     }
 }
 
@@ -268,11 +281,15 @@ mod tests {
         let mut out = Vec::new();
         out.push((if fin { 0x80 } else { 0 }) | opcode);
         let mask = [0x11, 0x22, 0x33, 0x44];
-        if payload.len() < 126 {
-            out.push(0x80 | payload.len() as u8);
-        } else {
+        let len = payload.len();
+        if len < 126 {
+            out.push(0x80 | len as u8);
+        } else if len <= u16::MAX as usize {
             out.push(0x80 | 126);
-            out.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+            out.extend_from_slice(&(len as u16).to_be_bytes());
+        } else {
+            out.push(0x80 | 127);
+            out.extend_from_slice(&(len as u64).to_be_bytes());
         }
         out.extend_from_slice(&mask);
         out.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
@@ -361,6 +378,145 @@ mod tests {
         assert_eq!(frame, vec![0x81, 0x02, b'o', b'k']);
         let big = encode_frame(OPCODE_BINARY, &vec![0u8; 126]).unwrap();
         assert_eq!(&big[..4], &[0x82, 126, 0x00, 0x7E]);
+    }
+
+    /// 帧头与载荷分两次到达：解码器必须保留解析状态。
+    #[test]
+    fn client_frame_can_arrive_in_two_reads() {
+        let frame = encode_frame(OPCODE_BINARY, b"hello").unwrap();
+        let mut decoder = WsDecoder::client();
+        assert_eq!(decoder.push(&frame[..2]).unwrap(), None);
+        assert_eq!(
+            decoder.push(&frame[2..]).unwrap(),
+            Some(WsMessage::Binary(b"hello".to_vec()))
+        );
+    }
+
+    /// 掩码帧在任意 TCP 切分位置都必须可解。
+    #[test]
+    fn masked_frame_survives_arbitrary_tcp_splits() {
+        let frame = mask_frame(OPCODE_BINARY, b"hello", true);
+        for split in 0..=frame.len() {
+            let mut dec = WsDecoder::new();
+            let first = dec.push(&frame[..split]).unwrap();
+            let msg = if first.is_some() { first } else { dec.push(&frame[split..]).unwrap() };
+            assert_eq!(msg, Some(WsMessage::Binary(b"hello".to_vec())), "split at {split}");
+        }
+    }
+
+    /// 扩展长度帧（126）在任意切分位置都必须可解。
+    #[test]
+    fn extended_length_survives_arbitrary_tcp_splits() {
+        let payload = vec![0x7Eu8; 300];
+        let frame = mask_frame(OPCODE_BINARY, &payload, true);
+        for split in 0..=frame.len() {
+            let mut dec = WsDecoder::new();
+            let first = dec.push(&frame[..split]).unwrap();
+            let msg = if first.is_some() { first } else { dec.push(&frame[split..]).unwrap() };
+            assert_eq!(msg, Some(WsMessage::Binary(payload.clone())), "split at {split}");
+        }
+    }
+
+    /// 客户端视角（服务端出向、不掩码）同样支持任意切分。
+    #[test]
+    fn client_view_frame_survives_arbitrary_tcp_splits() {
+        let frame = encode_frame(OPCODE_BINARY, b"hello").unwrap();
+        for split in 0..=frame.len() {
+            let mut dec = WsDecoder::client();
+            let first = dec.push(&frame[..split]).unwrap();
+            let msg = if first.is_some() { first } else { dec.push(&frame[split..]).unwrap() };
+            assert_eq!(msg, Some(WsMessage::Binary(b"hello".to_vec())), "split at {split}");
+        }
+    }
+
+    /// 长度边界：125/126 与 65535/65536。
+    #[test]
+    fn length_boundaries_125_126_65535_65536() {
+        for size in [125usize, 126, 65535, 65536] {
+            let payload = vec![0x5Au8; size];
+            let frame = mask_frame(OPCODE_BINARY, &payload, true);
+            let mut dec = WsDecoder::new();
+            let msg = dec.push(&frame).unwrap().expect("complete frame");
+            assert_eq!(msg, WsMessage::Binary(payload), "size {size}");
+        }
+    }
+
+    /// 声明长度超限时，无需等待载荷到达即可拒绝。
+    #[test]
+    fn declared_oversized_length_rejected_before_payload() {
+        // 服务端视角：掩码帧 127 扩展长度声明 MAX+1，仅提供 10 字节帧头。
+        let mut header = vec![0x82, 0x80 | 127];
+        header.extend_from_slice(&(MAX_WS_PAYLOAD as u64 + 1).to_be_bytes());
+        let mut server = WsDecoder::new();
+        assert!(matches!(server.push(&header), Err(WsError::TooLarge)));
+
+        // 客户端视角：不掩码帧同样提前拒绝。
+        let mut header = vec![0x82, 127];
+        header.extend_from_slice(&(MAX_WS_PAYLOAD as u64 + 1).to_be_bytes());
+        let mut client = WsDecoder::client();
+        assert!(matches!(client.push(&header), Err(WsError::TooLarge)));
+    }
+
+    /// 同一输入含多条完整消息：一次返回一条，空输入继续排空。
+    #[test]
+    fn multiple_complete_messages_require_drain() {
+        let mut chunk = mask_frame(OPCODE_TEXT, b"one", true);
+        chunk.extend_from_slice(&mask_frame(OPCODE_BINARY, b"two", true));
+        let mut dec = WsDecoder::new();
+        assert_eq!(dec.push(&chunk).unwrap(), Some(WsMessage::Text("one".into())));
+        assert_eq!(dec.push(&[]).unwrap(), Some(WsMessage::Binary(b"two".to_vec())));
+        assert_eq!(dec.push(&[]).unwrap(), None);
+    }
+
+    /// 起始分片与续帧同批到达：消费非最终分片后继续检查缓存。
+    #[test]
+    fn fragmented_start_and_continuation_in_one_chunk() {
+        let mut chunk = mask_frame(OPCODE_TEXT, b"he", false);
+        chunk.extend_from_slice(&mask_frame(OPCODE_CONT, b"llo", true));
+        let mut dec = WsDecoder::new();
+        assert_eq!(dec.push(&chunk).unwrap(), Some(WsMessage::Text("hello".into())));
+    }
+
+    /// 分片之间穿插控制帧：控制帧立即返回，续帧留在缓存按序消费。
+    #[test]
+    fn ping_interleaved_between_fragments() {
+        let mut chunk = mask_frame(OPCODE_TEXT, b"he", false);
+        chunk.extend_from_slice(&mask_frame(OPCODE_PING, b"p", true));
+        chunk.extend_from_slice(&mask_frame(OPCODE_CONT, b"llo", true));
+        let mut dec = WsDecoder::new();
+        assert_eq!(dec.push(&chunk).unwrap(), Some(WsMessage::Ping(vec![b'p'])));
+        assert_eq!(dec.push(&[]).unwrap(), Some(WsMessage::Text("hello".into())));
+    }
+
+    /// 完整消息后接半帧：半帧不消费，补齐后得到第二条。
+    #[test]
+    fn complete_message_followed_by_partial_frame() {
+        let first = mask_frame(OPCODE_TEXT, b"one", true);
+        let second = mask_frame(OPCODE_BINARY, b"two", true);
+        let mut chunk = first;
+        chunk.extend_from_slice(&second[..3]);
+        let mut dec = WsDecoder::new();
+        assert_eq!(dec.push(&chunk).unwrap(), Some(WsMessage::Text("one".into())));
+        assert_eq!(dec.push(&[]).unwrap(), None);
+        assert_eq!(dec.push(&second[3..]).unwrap(), Some(WsMessage::Binary(b"two".to_vec())));
+    }
+
+    /// 续帧累计长度超限：追加前拒绝。
+    #[test]
+    fn fragment_cumulative_limit_rejected_before_append() {
+        let mut dec = WsDecoder::new();
+        let big = mask_frame(OPCODE_BINARY, &vec![0u8; MAX_WS_PAYLOAD - 1], false);
+        assert_eq!(dec.push(&big).unwrap(), None);
+        let extra = mask_frame(OPCODE_CONT, &[0u8; 2], true);
+        assert!(matches!(dec.push(&extra), Err(WsError::TooLarge)));
+    }
+
+    /// Close 帧终结解码。
+    #[test]
+    fn close_frame_terminates_decoding() {
+        let frame = mask_frame(OPCODE_CLOSE, b"", true);
+        let mut dec = WsDecoder::new();
+        assert!(matches!(dec.push(&frame), Err(WsError::Closed)));
     }
 }
 
