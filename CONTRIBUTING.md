@@ -16,6 +16,8 @@ Run the relevant gate first; before proposing a complete change, run:
 ./scripts/run-quality-gates.sh
 ```
 
+Heavy builds and gates (Android/Rust/Zig/miniprogram) run on a dedicated Linux builder; a local macOS checkout only needs git, an editor, and adb for device operations.
+
 Android release signing is external to the repository. A successful unsigned or debug build does not verify formal signing or device behavior.
 
 ## Pull requests

@@ -41,6 +41,10 @@ Android TV 应用开发测试辅助工具：电视端 APK 提供安全的按键�
 
 ## 开发验证
 
+本项目的重型构建与门禁（Android/Rust/Zig/小程序）在专用 Linux 构建机上执行；
+本地 macOS 检出只需 git、编辑器与 adb（用于设备操作）。以下命令需要完整工具链，
+在具备工具链的机器上运行。
+
 ```text
 cd windows-controller
 ZIG_GLOBAL_CACHE_DIR="$PWD/.temp/zig-global-cache" \
