@@ -56,7 +56,10 @@ pub struct SessionCrypto {
 
 #[uniffi::export]
 impl SessionCrypto {
-    /// 从 PSK 与双方随机数派生；`is_client` 决定本端使用哪个方向。
+    /// 从 PSK 与双方随机数派生会话密钥。
+    ///
+    /// `_is_client` 为绑定兼容保留：本端方向由每次 `seal`/`open` 的 `is_client`
+    /// 参数决定，构造器不区分角色。
     #[uniffi::constructor]
     pub fn new(
         psk: Vec<u8>,
@@ -65,7 +68,16 @@ impl SessionCrypto {
         _is_client: bool,
         replay_window_bits: u8,
     ) -> Result<Self, FfiError> {
-        let psk: [u8; 32] = psk
+        // PSK 守卫：提前返回或构造结束时自动清零。
+        let psk = zeroize::Zeroizing::new(psk);
+        // 非法窗口在密钥派生之前显式失败，不触发 ReplayGuard 的内部断言。
+        if !(1..=64).contains(&replay_window_bits) {
+            return Err(FfiError::Invalid(
+                "replay_window_bits must be in 1..=64".into(),
+            ));
+        }
+        let psk: &[u8; 32] = psk
+            .as_slice()
             .try_into()
             .map_err(|_| FfiError::Invalid("psk must be 32 bytes".into()))?;
         let client_random: [u8; 32] = client_random
@@ -74,7 +86,7 @@ impl SessionCrypto {
         let server_random: [u8; 32] = server_random
             .try_into()
             .map_err(|_| FfiError::Invalid("server_random must be 32 bytes".into()))?;
-        let keys = SessionKeys::derive(&psk, &client_random, &server_random);
+        let keys = SessionKeys::derive(psk, &client_random, &server_random);
         Ok(SessionCrypto {
             client_to_server: Mutex::new(DirectionCipher::new(keys.client_to_server)),
             server_to_client: Mutex::new(DirectionCipher::new(keys.server_to_client)),
@@ -225,5 +237,22 @@ mod tests {
         assert_eq!(frames[0].payload, b"one");
         assert_eq!(frames[1].opcode, OPCODE_BINARY);
         assert_eq!(frames[1].payload, b"two");
+    }
+
+    #[test]
+    fn session_crypto_rejects_out_of_range_replay_window() {
+        let psk = vec![0u8; 32];
+        let random = vec![0u8; 32];
+        for bits in [0u8, 65, 255] {
+            let result =
+                SessionCrypto::new(psk.clone(), random.clone(), random.clone(), true, bits);
+            assert!(matches!(result, Err(FfiError::Invalid(_))), "bits {bits} must be Invalid");
+        }
+        for bits in [1u8, 64] {
+            assert!(
+                SessionCrypto::new(psk.clone(), random.clone(), random.clone(), true, bits).is_ok(),
+                "bits {bits} must be Ok"
+            );
+        }
     }
 }

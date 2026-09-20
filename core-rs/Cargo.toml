@@ -11,6 +11,9 @@ crate-type = ["cdylib", "lib", "staticlib"]
 
 [dependencies]
 aes-gcm = "0.10"
+# 直接依赖 aes 以启用其隐式 zeroize feature（aes-gcm 0.10.3 无 zeroize feature），
+# 使 AES 密钥展开在 Drop 时清零。与 aes-gcm 依赖的 aes 0.8 为同一实现。
+aes = { version = "0.8", features = ["zeroize"] }
 hkdf = "0.12"
 sha2 = "0.10"
 rand = "0.8"
