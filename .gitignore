@@ -42,3 +42,6 @@ node_modules/
 
 # Python 缓存
 __pycache__/
+
+# Rust Android cross-build output (no Android JNI consumer; regenerate via cargo-ndk)
+core-rs/jniLibs/
