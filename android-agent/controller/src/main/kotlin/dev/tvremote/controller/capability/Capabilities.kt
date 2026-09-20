@@ -20,9 +20,6 @@ enum class KeySupport {
     /** 是否允许下发该按键。 */
     val canAttempt: Boolean get() = this == SUPPORTED || this == BEST_EFFORT
 
-    /** 是否需要展示“尽力而为”兼容提示。 */
-    val needsCompatibilityHint: Boolean get() = this == BEST_EFFORT
-
     companion object {
         fun parse(raw: String?): KeySupport = when (raw) {
             "SUPPORTED" -> SUPPORTED
@@ -42,8 +39,6 @@ enum class TextSupport {
     PERMISSION_REQUIRED,
     UNSUPPORTED,
     UNVERIFIED;
-
-    val canSend: Boolean get() = this == SUPPORTED
 
     companion object {
         fun parse(raw: String?): TextSupport = when (raw) {

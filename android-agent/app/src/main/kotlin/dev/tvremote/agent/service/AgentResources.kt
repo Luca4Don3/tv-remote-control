@@ -18,7 +18,7 @@ internal class AgentResources {
 
     /**
      * Installs the initial resources. When the service already shut down, the passed-in resources
-     * are closed here and false is returned so a late [AgentService.initialize] cannot leak
+     * are closed here and false is returned so a late [AgentService.initializeNetwork] cannot leak
      * listeners or sockets.
      */
     fun install(control: AutoCloseable, discovery: AutoCloseable, backend: KeyBackend?): Boolean {

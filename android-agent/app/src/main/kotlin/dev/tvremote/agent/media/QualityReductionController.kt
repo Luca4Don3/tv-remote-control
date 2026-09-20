@@ -51,7 +51,7 @@ class QualityReductionController(
     fun rejectedPacketCount(): Int = rejectedOrdinaryPackets
 
     private fun requestWhen(condition: Boolean): Boolean {
-        if (!condition || state != State.DEFAULT) return false
+        if (!condition) return false
         state = State.PENDING
         return true
     }

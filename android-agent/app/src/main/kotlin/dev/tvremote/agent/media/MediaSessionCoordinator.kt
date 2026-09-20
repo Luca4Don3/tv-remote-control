@@ -83,7 +83,7 @@ class MediaSessionCoordinator(
         val attachedChannel = MediaPacketChannel(output, closeTransport)
         channel = attachedChannel
         onState("media_permission_required")
-        val expectedAttachmentId = checkNotNull(attachmentId)
+        val expectedAttachmentId = nextAttachmentId
         scheduleExpiry(AUTHORIZATION_TTL_MS) { expireAuthorization(expectedAttachmentId) }
         return MediaAttachment(expectedAttachmentId, attachedChannel)
     }
@@ -134,11 +134,6 @@ class MediaSessionCoordinator(
         val detached = detachLocked()
         onState("media_idle")
         closeDetached(detached)
-    }
-
-    @Synchronized
-    fun hasAttachedSession(controllerId: String, sessionId: String): Boolean {
-        return attachedControllerId == controllerId && attachedSessionId == sessionId && channel != null
     }
 
     @Synchronized

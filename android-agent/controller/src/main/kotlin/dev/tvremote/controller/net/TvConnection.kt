@@ -1,6 +1,5 @@
 package dev.tvremote.controller.net
 
-import android.util.Log
 import dev.tvremote.agent.protocol.FrameCodec
 import dev.tvremote.agent.protocol.Hex
 import dev.tvremote.agent.protocol.JsonValue
@@ -79,7 +78,6 @@ class TvConnection private constructor(
     }
 
     companion object {
-        private const val TAG = "TvrcController"
         const val DEFAULT_PORT = 47832
         private const val HANDSHAKE_TIMEOUT_MS = 10_000
         private const val READ_TIMEOUT_MS = 45_000
