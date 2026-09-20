@@ -37,6 +37,17 @@ verify_locked() {
     }
 }
 
+# 仅用于上游随时变动的元数据（如 Android 仓库索引）：不按 size/SHA 锁定。
+fetch_unpinned() {
+    url=$1
+    output=$2
+    if [ ! -f "$output" ]; then
+        partial="$output.partial.$$"
+        curl --fail --location --proto '=https' --max-time 120 --output "$partial" "$url"
+        mv "$partial" "$output"
+    fi
+}
+
 mbedtls_archive="$cache_dir/mbedtls-3.6.7.tar.gz"
 scrcpy_server="$cache_dir/scrcpy-server-v4.1"
 scrcpy_license="$cache_dir/scrcpy-LICENSE-v4.1"
@@ -57,10 +68,11 @@ fetch_locked \
     "https://dl.google.com/android/repository/platform-tools_r37.0.1-win.zip" \
     "$platform_tools_windows" 8044989 \
     45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99
-fetch_locked \
+# repository2-1.xml 是 Google 随时更新的仓库索引，仅用于提取 SDK 许可文本；
+# 不按 size/SHA 锁定它，实际依赖产物（platform-tools zip）仍严格校验。
+fetch_unpinned \
     "https://dl.google.com/android/repository/repository2-1.xml" \
-    "$cache_dir/repository2-1.xml" 371995 \
-    461e45d338c8969a89b4f8b05d8abd698a2b58403fe6d8c2cca241b4a502ee0a
+    "$cache_dir/repository2-1.xml"
 
 # 从仓库元数据提取 Android SDK License 文本，作为 platform-tools 的随包许可
 android_sdk_license="$vendor_dir/android-sdk-license.txt"
