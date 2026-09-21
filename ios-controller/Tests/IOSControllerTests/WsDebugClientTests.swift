@@ -83,7 +83,7 @@ final class WsDebugClientTests: XCTestCase {
         defer { agent.stop() }
         agent.start(controllerId: controllerId)
 
-        let client = try runBounded("connect", timeout: 5) {
+        let client = try runBounded("connect", timeout: 5, onLateDiscard: { $0.close() }) {
             try WsDebugClient(host: "127.0.0.1", controllerId: controllerId, psk: psk, port: agent.port)
         }
         defer { client.close() }
@@ -113,7 +113,7 @@ final class WsDebugClientTests: XCTestCase {
         defer { agent.stop() }
         agent.start(controllerId: controllerId)
 
-        let client = try runBounded("connect", timeout: 5) {
+        let client = try runBounded("connect", timeout: 5, onLateDiscard: { $0.close() }) {
             try WsDebugClient(host: "127.0.0.1", controllerId: controllerId, psk: psk, port: agent.port)
         }
         defer { client.close() }
@@ -147,7 +147,7 @@ final class WsDebugClientTests: XCTestCase {
         defer { agent.stop() }
         agent.start(controllerId: controllerId)
 
-        let client = try runBounded("connect", timeout: 5) {
+        let client = try runBounded("connect", timeout: 5, onLateDiscard: { $0.close() }) {
             try WsDebugClient(host: "127.0.0.1", controllerId: controllerId, psk: psk, port: agent.port)
         }
         defer { client.close() }
@@ -222,13 +222,37 @@ private enum TestFailure: Error {
     case timeout(String)
 }
 
-/// 跨线程传递 `Result`（`@unchecked Sendable`，内部加锁）。
-private final class ResultBox<T>: @unchecked Sendable {
+/// 跨线程传递 `Result`，并在超时放弃时就地清理迟到结果（`@unchecked Sendable`，内部加锁）。
+private final class BoundedBox<T>: @unchecked Sendable {
     private let lock = NSLock()
+    private let onLateDiscard: ((T) -> Void)?
     private var storage: Result<T, Error>?
-    func store(_ result: Result<T, Error>) {
-        lock.lock(); storage = result; lock.unlock()
+    private var abandoned = false
+
+    init(onLateDiscard: ((T) -> Void)?) {
+        self.onLateDiscard = onLateDiscard
     }
+
+    /// 后台完成：若已被放弃则立即丢弃（清理）；否则保存结果供等待方读取。
+    func finish(_ result: Result<T, Error>) {
+        lock.lock()
+        if abandoned {
+            lock.unlock()
+            if let value = try? result.get() { onLateDiscard?(value) }
+            return
+        }
+        storage = result
+        lock.unlock()
+    }
+
+    /// 超时放弃：若后台已完成，返回结果供调用方清理。
+    func abandon() -> T? {
+        lock.lock(); defer { lock.unlock() }
+        abandoned = true
+        guard let result = storage, let value = try? result.get() else { return nil }
+        return value
+    }
+
     var result: Result<T, Error> {
         lock.lock(); defer { lock.unlock() }
         return storage!
@@ -236,14 +260,23 @@ private final class ResultBox<T>: @unchecked Sendable {
 }
 
 /// 在后台队列执行可能阻塞的客户端调用，并以有限时间等待；超时抛错而非挂起测试。
-private func runBounded<T>(_ description: String, timeout: TimeInterval, _ body: @escaping () throws -> T) throws -> T {
+/// 超时时若结果迟到（如连接稍后成功），通过 `onLateDiscard` 清理，避免资源泄漏。
+private func runBounded<T>(
+    _ description: String,
+    timeout: TimeInterval,
+    onLateDiscard: ((T) -> Void)? = nil,
+    _ body: @escaping () throws -> T
+) throws -> T {
     let semaphore = DispatchSemaphore(value: 0)
-    let box = ResultBox<T>()
+    let box = BoundedBox<T>(onLateDiscard: onLateDiscard)
     DispatchQueue.global().async {
-        box.store(Result { try body() })
+        box.finish(Result { try body() })
         semaphore.signal()
     }
     guard semaphore.wait(timeout: .now() + timeout) == .success else {
+        if let late = box.abandon() { onLateDiscard?(late) }
+        // 有限等待后台退出；若后台在放弃之后才完成，finish 会自行清理。
+        _ = semaphore.wait(timeout: .now() + 1.0)
         throw TestFailure.timeout(description)
     }
     return try box.result.get()
@@ -474,8 +507,13 @@ private final class LoopbackAgent {
         var byte = [UInt8](repeating: 0, count: 1)
         while !(request.count >= 4 && Array(request.suffix(4)) == [13, 10, 13, 10]) {
             let n = recv(fd, &byte, 1, 0)
-            guard n > 0 else { throw LoopbackError.connectionClosed }
-            request.append(byte[0])
+            if n > 0 {
+                request.append(byte[0])
+                continue
+            }
+            if n == 0 { throw LoopbackError.connectionClosed }
+            if errno == EINTR { continue }
+            throw LoopbackError.ioError("http recv failed: errno=\(errno)")
         }
         let text = String(decoding: request, as: UTF8.self)
         guard let keyLine = text.components(separatedBy: "\r\n").first(where: {
@@ -494,8 +532,13 @@ private final class LoopbackAgent {
         var buffer = [UInt8](repeating: 0, count: 4096)
         while pending.isEmpty {
             let n = recv(fd, &buffer, buffer.count, 0)
-            guard n > 0 else { throw LoopbackError.connectionClosed }
-            pending.append(contentsOf: try codec.push(chunk: Data(buffer.prefix(n))))
+            if n > 0 {
+                pending.append(contentsOf: try codec.push(chunk: Data(buffer.prefix(n))))
+                continue
+            }
+            if n == 0 { throw LoopbackError.connectionClosed }
+            if errno == EINTR { continue }
+            throw LoopbackError.ioError("recv failed: errno=\(errno)")
         }
         return pending.removeFirst()
     }
@@ -506,8 +549,13 @@ private final class LoopbackAgent {
             let written = data.withUnsafeBytes { raw -> Int in
                 send(fd, raw.baseAddress! + offset, data.count - offset, 0)
             }
-            guard written > 0 else { throw LoopbackError.connectionClosed }
-            offset += written
+            if written > 0 {
+                offset += written
+                continue
+            }
+            if written == 0 { throw LoopbackError.ioError("send returned 0") }
+            if errno == EINTR { continue }
+            throw LoopbackError.ioError("send failed: errno=\(errno)")
         }
     }
 
@@ -522,5 +570,6 @@ private final class LoopbackAgent {
     private enum LoopbackError: Error {
         case connectionClosed
         case protocolViolation
+        case ioError(String)
     }
 }
