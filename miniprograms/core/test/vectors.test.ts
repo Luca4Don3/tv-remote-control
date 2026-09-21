@@ -150,6 +150,28 @@ test("envelope encode/decode roundtrip and classification", () => {
   assert.equal(event.kind, "other");
 });
 
+test("envelope sequence must be positive on encode and raw decode", () => {
+  const base = {
+    protocolVersion: 1,
+    requestId: "c-1",
+    sessionId: "",
+    type: "ping",
+    payload: {},
+  };
+  assert.throws(() => encodeEnvelope({ ...base, sequence: 0n }), /sequence/);
+  assert.throws(() => encodeEnvelope({ ...base, sequence: -1n }), /sequence/);
+  assert.doesNotThrow(() => encodeEnvelope({ ...base, sequence: 1n }));
+
+  // 直接构造 JSON 解码，避免被编码器提前拦截
+  const raw = (seq: number): Uint8Array =>
+    new TextEncoder().encode(
+      `{"protocolVersion":1,"requestId":"c-1","sessionId":"","sequence":${seq},"type":"ping","payload":{}}`,
+    );
+  assert.throws(() => decodeEnvelope(raw(0)), /sequence/);
+  assert.throws(() => decodeEnvelope(raw(-1)), /sequence/);
+  assert.equal(decodeEnvelope(raw(1)).sequence, 1n);
+});
+
 test("classifyFrame routes frame-level ping and encrypted ping separately", () => {
   const decoder = new WsDecoder();
   const routed = classifyFrame(decoder.push(new Uint8Array([0x89, 0x04, ...Buffer.from("tvrc")]))!);

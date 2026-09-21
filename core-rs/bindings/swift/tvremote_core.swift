@@ -649,7 +649,10 @@ open class SessionCrypto: SessionCryptoProtocol, @unchecked Sendable {
         return try! rustCall { uniffi_tvremote_core_fn_clone_sessioncrypto(self.handle, $0) }
     }
     /**
-     * 从 PSK 与双方随机数派生；`is_client` 决定本端使用哪个方向。
+     * 从 PSK 与双方随机数派生会话密钥。
+     *
+     * `_is_client` 为绑定兼容保留：本端方向由每次 `seal`/`open` 的 `is_client`
+     * 参数决定，构造器不区分角色。
      */
 public convenience init(psk: Data, clientRandom: Data, serverRandom: Data, isClient: Bool, replayWindowBits: UInt8)throws  {
     let handle =
@@ -788,7 +791,9 @@ public protocol WsCodecProtocol: AnyObject, Sendable {
     func encodeClient(opcode: UInt8, payload: Data) throws  -> Data
     
     /**
-     * 喂入 TCP 字节片段，返回本次解出的完整消息（可能为空）。
+     * 喂入 TCP 字节片段，返回本次输入中全部已完整的消息（可能为空）。
+     *
+     * `WsDecoder::push` 一次最多返回一条；这里以空输入继续排空同批已完整消息。
      */
     func push(chunk: Data) throws  -> [WsFrame]
     
@@ -899,7 +904,9 @@ open func encodeClient(opcode: UInt8, payload: Data)throws  -> Data  {
 }
     
     /**
-     * 喂入 TCP 字节片段，返回本次解出的完整消息（可能为空）。
+     * 喂入 TCP 字节片段，返回本次输入中全部已完整的消息（可能为空）。
+     *
+     * `WsDecoder::push` 一次最多返回一条；这里以空输入继续排空同批已完整消息。
      */
 open func push(chunk: Data)throws  -> [WsFrame]  {
     return try  FfiConverterSequenceTypeWsFrame.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
@@ -1248,10 +1255,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_tvremote_core_checksum_method_wscodec_encode_client() != 12355) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_tvremote_core_checksum_method_wscodec_push() != 34626) {
+    if (uniffi_tvremote_core_checksum_method_wscodec_push() != 56296) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_tvremote_core_checksum_constructor_sessioncrypto_new() != 252) {
+    if (uniffi_tvremote_core_checksum_constructor_sessioncrypto_new() != 61462) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_tvremote_core_checksum_constructor_wscodec_new() != 58134) {

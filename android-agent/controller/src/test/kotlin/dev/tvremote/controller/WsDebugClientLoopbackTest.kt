@@ -187,6 +187,46 @@ class WsDebugClientLoopbackTest {
     }
 
 
+    /**
+     * 心跳共享递增序号：注入 50ms 间隔，有界等待确认多次心跳后连接仍存活。
+     * 修复前心跳 sequence=0 会被 `ProtocolCodec.encode` 的 `require(sequence > 0)` 拒绝，
+     * 心跳线程 catch 后 close()，连接每 15s 自杀。
+     */
+    @Test
+    fun heartbeatSharesSequenceAndKeepsConnectionAlive() {
+        val secret = newSecret()
+        val controllerId = newControllerId()
+        val server = LoopbackServer(secret)
+        server.start()
+        try {
+            val client = WsDebugClient(
+                "127.0.0.1",
+                controllerId,
+                secret,
+                server.serverSocket.localPort,
+                heartbeatIntervalMs = 50L,
+            )
+            try {
+                assertTrue(server.handshakeSeen.await(5, TimeUnit.SECONDS))
+                val deadline = System.currentTimeMillis() + 5_000
+                while (client.outboundSequenceForTest() < 3 && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(10)
+                }
+                assertTrue(
+                    "至少 3 次心跳应已发送（实际 ${client.outboundSequenceForTest()}）",
+                    client.outboundSequenceForTest() >= 3,
+                )
+                // 心跳之后命令仍可收发（连接未被心跳关闭，且序号严格递增）
+                assertTrue(client.sendKeyEvent(LogicalKey.DPAD_UP.name, "UP"))
+                assertEquals(listOf("key_event"), server.receivedCommands.toList())
+            } finally {
+                client.close()
+            }
+        } finally {
+            server.close()
+        }
+    }
+
     /** 并发命令（等价心跳与 UI 同时发的场景）：请求/响应必须严格不错配。 */
     @Test
     fun concurrentCommandsNeverCrossWire() {

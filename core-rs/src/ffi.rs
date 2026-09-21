@@ -56,7 +56,10 @@ pub struct SessionCrypto {
 
 #[uniffi::export]
 impl SessionCrypto {
-    /// 从 PSK 与双方随机数派生；`is_client` 决定本端使用哪个方向。
+    /// 从 PSK 与双方随机数派生会话密钥。
+    ///
+    /// `_is_client` 为绑定兼容保留：本端方向由每次 `seal`/`open` 的 `is_client`
+    /// 参数决定，构造器不区分角色。
     #[uniffi::constructor]
     pub fn new(
         psk: Vec<u8>,
@@ -65,7 +68,16 @@ impl SessionCrypto {
         _is_client: bool,
         replay_window_bits: u8,
     ) -> Result<Self, FfiError> {
-        let psk: [u8; 32] = psk
+        // PSK 守卫：提前返回或构造结束时自动清零。
+        let psk = zeroize::Zeroizing::new(psk);
+        // 非法窗口在密钥派生之前显式失败，不触发 ReplayGuard 的内部断言。
+        if !(1..=64).contains(&replay_window_bits) {
+            return Err(FfiError::Invalid(
+                "replay_window_bits must be in 1..=64".into(),
+            ));
+        }
+        let psk: &[u8; 32] = psk
+            .as_slice()
             .try_into()
             .map_err(|_| FfiError::Invalid("psk must be 32 bytes".into()))?;
         let client_random: [u8; 32] = client_random
@@ -74,7 +86,7 @@ impl SessionCrypto {
         let server_random: [u8; 32] = server_random
             .try_into()
             .map_err(|_| FfiError::Invalid("server_random must be 32 bytes".into()))?;
-        let keys = SessionKeys::derive(&psk, &client_random, &server_random);
+        let keys = SessionKeys::derive(psk, &client_random, &server_random);
         Ok(SessionCrypto {
             client_to_server: Mutex::new(DirectionCipher::new(keys.client_to_server)),
             server_to_client: Mutex::new(DirectionCipher::new(keys.server_to_client)),
@@ -162,17 +174,24 @@ impl WsCodec {
         WsCodec { decoder: Mutex::new(decoder) }
     }
 
-    /// 喂入 TCP 字节片段，返回本次解出的完整消息（可能为空）。
+    /// 喂入 TCP 字节片段，返回本次输入中全部已完整的消息（可能为空）。
+    ///
+    /// `WsDecoder::push` 一次最多返回一条；这里以空输入继续排空同批已完整消息。
     pub fn push(&self, chunk: Vec<u8>) -> Result<Vec<WsFrame>, FfiError> {
         let mut decoder = self.decoder.lock().unwrap();
         let mut frames = Vec::new();
-        match decoder.push(&chunk) {
-            Ok(Some(msg)) => frames.push(wire(msg)),
-            Ok(None) => {}
-            Err(crate::ws::WsError::Closed) => {
-                frames.push(WsFrame { opcode: 8, payload: Vec::new() });
+        let mut next = decoder.push(&chunk);
+        loop {
+            match next {
+                Ok(Some(message)) => frames.push(wire(message)),
+                Ok(None) => break,
+                Err(crate::ws::WsError::Closed) => {
+                    frames.push(WsFrame { opcode: 8, payload: Vec::new() });
+                    break;
+                }
+                Err(error) => return Err(error.into()),
             }
-            Err(e) => return Err(e.into()),
+            next = decoder.push(&[]);
         }
         Ok(frames)
     }
@@ -198,5 +217,58 @@ fn wire(msg: crate::ws::WsMessage) -> WsFrame {
         crate::ws::WsMessage::Ping(p) => WsFrame { opcode: OPCODE_PING, payload: p },
         crate::ws::WsMessage::Pong(p) => WsFrame { opcode: OPCODE_PONG, payload: p },
         crate::ws::WsMessage::Close(_) => WsFrame { opcode: 8, payload: Vec::new() },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ws::{encode_client_frame, OPCODE_BINARY, OPCODE_CLOSE, OPCODE_TEXT};
+
+    #[test]
+    fn ws_codec_push_returns_all_complete_messages() {
+        let codec = WsCodec::with_role(WsCodecRole::Server);
+        let mask = [1u8, 2, 3, 4];
+        let mut chunk = encode_client_frame(OPCODE_TEXT, b"one", &mask).unwrap();
+        chunk.extend_from_slice(&encode_client_frame(OPCODE_BINARY, b"two", &mask).unwrap());
+        let frames = codec.push(chunk).unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].opcode, OPCODE_TEXT);
+        assert_eq!(frames[0].payload, b"one");
+        assert_eq!(frames[1].opcode, OPCODE_BINARY);
+        assert_eq!(frames[1].payload, b"two");
+    }
+
+    /// 同批「普通消息 + Close + 后续消息」：返回普通消息与 Close，并在 Close 停止。
+    #[test]
+    fn ws_codec_push_stops_after_close_in_same_batch() {
+        let codec = WsCodec::with_role(WsCodecRole::Server);
+        let mask = [9u8, 8, 7, 6];
+        let mut chunk = encode_client_frame(OPCODE_TEXT, b"ok", &mask).unwrap();
+        chunk.extend_from_slice(&encode_client_frame(OPCODE_CLOSE, b"", &mask).unwrap());
+        chunk.extend_from_slice(&encode_client_frame(OPCODE_TEXT, b"after", &mask).unwrap());
+        let frames = codec.push(chunk).unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].opcode, OPCODE_TEXT);
+        assert_eq!(frames[0].payload, b"ok");
+        assert_eq!(frames[1].opcode, 8);
+        assert!(frames[1].payload.is_empty());
+    }
+
+    #[test]
+    fn session_crypto_rejects_out_of_range_replay_window() {
+        let psk = vec![0u8; 32];
+        let random = vec![0u8; 32];
+        for bits in [0u8, 65, 255] {
+            let result =
+                SessionCrypto::new(psk.clone(), random.clone(), random.clone(), true, bits);
+            assert!(matches!(result, Err(FfiError::Invalid(_))), "bits {bits} must be Invalid");
+        }
+        for bits in [1u8, 64] {
+            assert!(
+                SessionCrypto::new(psk.clone(), random.clone(), random.clone(), true, bits).is_ok(),
+                "bits {bits} must be Ok"
+            );
+        }
     }
 }

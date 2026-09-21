@@ -54,7 +54,7 @@ zig build test
 cd ../android-agent
 ./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease
 
-# 具备 JDK 17、Zig 0.16.0、Android SDK；macOS 上另执行 Swift 与 app 链接门禁
+# 具备最新 JDK（CI 使用 JDK 25）、Zig 0.16.0、Android SDK；macOS 上另执行 Swift 与 app 链接门禁
 cd ..
 ./scripts/run-quality-gates.sh
 ```

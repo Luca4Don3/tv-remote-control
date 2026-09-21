@@ -1,19 +1,13 @@
-//! TV Remote core protocol: framing, session crypto, pairing.
+//! TV Remote core: session crypto, replay protection, and WebSocket codec.
 //!
-//! 帧格式：4 字节大端 u32 长度前缀 + 载荷（对齐 Kotlin `FrameCodec.kt`）。
-//! 所有消息均为 JSON 控制消息（UTF-8）或二进制媒体包。
+//! 仅保留活跃通信路径所需原语；JSON 信封编解码由各端自持
+//! （Kotlin 有 `StrictJson`，Apple/小程序各自实现）。
 
 pub mod crypto;
-pub mod envelope;
 pub mod replay;
 pub mod ffi;
 pub mod ws;
-pub mod json;
-pub mod frame;
-pub mod pairing;
 
-pub use frame::{write_frame, read_frame, Frame, FrameDecoder, FrameError, FrameDecodeError, MAGIC, MAX_FRAME_SIZE};
 pub use crypto::{CryptoError, DirectionCipher, SessionKeys};
-pub use envelope::{Envelope, ProtocolError, VERSION};
 
 uniffi::setup_scaffolding!("tvremote_core");

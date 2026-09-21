@@ -21,10 +21,17 @@ pub fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8], okm: &mut [u8]) {
 }
 
 /// 双向会话密钥集（各 32B）。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionKeys {
     pub client_to_server: [u8; 32],
     pub server_to_client: [u8; 32],
+}
+
+impl Drop for SessionKeys {
+    fn drop(&mut self) {
+        self.client_to_server.zeroize();
+        self.server_to_client.zeroize();
+    }
 }
 
 impl SessionKeys {
@@ -69,8 +76,10 @@ pub struct DirectionCipher {
 
 impl DirectionCipher {
     pub fn new(key: [u8; 32]) -> Self {
+        // 按值传入的密钥副本在函数返回时清零（调用方仍持有原始副本自行负责）。
+        let key = zeroize::Zeroizing::new(key);
         DirectionCipher {
-            cipher: Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key)),
+            cipher: Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key[..])),
             // 加密信封 counter 从 1 开始：0 在防重放窗口中为“未收到任何消息”哨兵值
             send_counter: 1,
         }

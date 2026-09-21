@@ -3,14 +3,17 @@ name = "tvremote_core"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "TV Remote core protocol: framing, crypto, pairing"
+description = "TV Remote core protocol: session crypto, replay protection, and WebSocket codec"
 license = "Apache-2.0"
 
 [lib]
 crate-type = ["cdylib", "lib", "staticlib"]
 
 [dependencies]
-aes-gcm = "0.10"
+# 两个 crate 均由可选依赖生成隐式 zeroize feature，显式启用以清零底层密码状态。
+aes-gcm = { version = "0.10", features = ["zeroize"] }
+# 直接依赖 aes 以启用其隐式 zeroize feature；与 aes-gcm 依赖的 aes 0.8 为同一实现。
+aes = { version = "0.8", features = ["zeroize"] }
 hkdf = "0.12"
 sha2 = "0.10"
 rand = "0.8"

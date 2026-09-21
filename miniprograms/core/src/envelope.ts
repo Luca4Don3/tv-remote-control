@@ -29,9 +29,8 @@ function assertValid(envelope: Envelope): void {
   if (envelope.protocolVersion !== PROTOCOL_VERSION) throw new Error("unsupported protocolVersion");
   if (!IDENTIFIER.test(envelope.requestId)) throw new Error("invalid requestId");
   if (envelope.sessionId !== "" && !IDENTIFIER.test(envelope.sessionId)) throw new Error("invalid sessionId");
-  // sequence=0 仅心跳信封使用（对齐 Kotlin：fire-and-forget 探活无命令语义）；
-  // 命令层（DebugWsSession）自行保证严格递增且从 1 起
-  if (envelope.sequence < 0n) throw new Error("sequence must be >= 0");
+  // 心跳和命令均使用正序号；会话层负责按发送顺序严格递增（对齐 Kotlin/agent 服务端）。
+  if (envelope.sequence <= 0n) throw new Error("sequence must be > 0");
   if (!TYPE.test(envelope.type)) throw new Error("invalid type");
 }
 

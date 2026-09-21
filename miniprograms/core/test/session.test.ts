@@ -176,7 +176,17 @@ test("heartbeat ping is sent encrypted and gets no ack", async (t) => {
   const pings = agent.received.filter((e) => e.type === "ping");
   assert.equal(pings.length, 1);
   assert.equal(pings[0]!.sessionId, "ab".repeat(16));
-  assert.equal(pings[0]!.sequence, 0n);
+  assert.equal(pings[0]!.sequence, 1n);
+});
+
+test("heartbeat shares command sequence and gets no ack", async (t) => {
+  const { session, agent } = await setup();
+  t.after(() => session.close());
+  await session.sendKeyEvent("A", "DOWN", 0);
+  (session as unknown as { sendHeartbeat(): void }).sendHeartbeat();
+  await session.sendKeyEvent("A", "UP", 0);
+  assert.deepEqual(agent.received.map((e) => e.sequence), [1n, 2n, 3n]);
+  assert.equal(agent.received[1]!.type, "ping");
 });
 
 test("replayed inbound cipher frame is rejected and closes session", async (t) => {
