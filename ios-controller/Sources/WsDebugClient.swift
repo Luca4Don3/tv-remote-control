@@ -79,15 +79,7 @@ final class WsDebugClient: @unchecked Sendable {
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
             do {
-                // 序号分配、加密、写入必须在同一发送锁内：与命令严格串行，避免乱序。
-                self.ioLock.lock()
-                defer { self.ioLock.unlock() }
-                self.outboundSequence += 1
-                let ping = "{\"protocolVersion\":1,\"requestId\":\"hb-\(UInt64.random(in: 1...UInt64.max))\","
-                    + "\"sessionId\":\"\(self.controllerId)\",\"sequence\":\(self.outboundSequence),\"type\":\"ping\",\"payload\":{}}"
-                let sealed = try self.crypto.seal(isClient: true, plaintext: Data(ping.utf8), aad: Data())
-                let frame = try self.wsCodec.encodeClient(opcode: 2, payload: sealed)
-                try Self.writeAll(fd: self.socketFD, frame)
+                try self.sendHeartbeat()
             } catch {
                 self.close()
             }
@@ -99,6 +91,19 @@ final class WsDebugClient: @unchecked Sendable {
     func close() {
         heartbeat?.cancel()
         Self.closeSocketFd(socketFD)
+    }
+
+    /// 发送一次加密心跳（fire-and-forget）。序号分配、加密、写入在同一 ioLock 内，
+    /// 与命令严格串行；生产定时器（默认 15s）调用本方法，测试可直接调用。
+    func sendHeartbeat() throws {
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        outboundSequence += 1
+        let ping = "{\"protocolVersion\":1,\"requestId\":\"hb-\(UInt64.random(in: 1...UInt64.max))\","
+            + "\"sessionId\":\"\(controllerId)\",\"sequence\":\(outboundSequence),\"type\":\"ping\",\"payload\":{}}"
+        let sealed = try crypto.seal(isClient: true, plaintext: Data(ping.utf8), aad: Data())
+        let frame = try wsCodec.encodeClient(opcode: 2, payload: sealed)
+        try Self.writeAll(fd: socketFD, frame)
     }
 
     // MARK: - 遥控/文本命令（加密信封）
@@ -171,7 +176,7 @@ final class WsDebugClient: @unchecked Sendable {
         }
     }
 
-    private static func helloExchange(fd: Int32, controllerId: String, clientRandom: Data, wsCodec: inout WsCodec, pending: inout [WsFrame]) throws -> Data {
+    static func helloExchange(fd: Int32, controllerId: String, clientRandom: Data, wsCodec: inout WsCodec, pending: inout [WsFrame]) throws -> Data {
         let hello = "{\"protocolVersion\":1,\"requestId\":\"ws-hello-1\",\"sessionId\":\"\","
             + "\"sequence\":1,\"type\":\"ws_hello\",\"payload\":{\"controllerId\":\"\(controllerId)\","
             + "\"clientRandom\":\"\(clientRandom.map { String(format: "%02x", $0) }.joined())\"}}"
@@ -254,7 +259,7 @@ final class WsDebugClient: @unchecked Sendable {
 
     /// 从缓存按序取一帧；缓存为空时读取 socket 并交由 Rust 解码器缓冲/拆分。
     /// 不再人为先读 2 字节帧头——任意 TCP 切分由解码器处理，同批多帧入队。
-    private static func readFrame(fd: Int32, wsCodec: inout WsCodec, pending: inout [WsFrame]) throws -> (opcode: UInt8, payload: Data) {
+    static func readFrame(fd: Int32, wsCodec: inout WsCodec, pending: inout [WsFrame]) throws -> (opcode: UInt8, payload: Data) {
         var chunk = [UInt8](repeating: 0, count: 1024)
         while pending.isEmpty {
             let n = try readChunk(fd: fd, into: &chunk)

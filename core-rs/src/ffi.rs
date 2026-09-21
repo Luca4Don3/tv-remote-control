@@ -223,7 +223,7 @@ fn wire(msg: crate::ws::WsMessage) -> WsFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ws::{encode_client_frame, OPCODE_BINARY, OPCODE_TEXT};
+    use crate::ws::{encode_client_frame, OPCODE_BINARY, OPCODE_CLOSE, OPCODE_TEXT};
 
     #[test]
     fn ws_codec_push_returns_all_complete_messages() {
@@ -237,6 +237,22 @@ mod tests {
         assert_eq!(frames[0].payload, b"one");
         assert_eq!(frames[1].opcode, OPCODE_BINARY);
         assert_eq!(frames[1].payload, b"two");
+    }
+
+    /// 同批「普通消息 + Close + 后续消息」：返回普通消息与 Close，并在 Close 停止。
+    #[test]
+    fn ws_codec_push_stops_after_close_in_same_batch() {
+        let codec = WsCodec::with_role(WsCodecRole::Server);
+        let mask = [9u8, 8, 7, 6];
+        let mut chunk = encode_client_frame(OPCODE_TEXT, b"ok", &mask).unwrap();
+        chunk.extend_from_slice(&encode_client_frame(OPCODE_CLOSE, b"", &mask).unwrap());
+        chunk.extend_from_slice(&encode_client_frame(OPCODE_TEXT, b"after", &mask).unwrap());
+        let frames = codec.push(chunk).unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].opcode, OPCODE_TEXT);
+        assert_eq!(frames[0].payload, b"ok");
+        assert_eq!(frames[1].opcode, 8);
+        assert!(frames[1].payload.is_empty());
     }
 
     #[test]
