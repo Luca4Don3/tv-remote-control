@@ -12,11 +12,14 @@ macos_dir="$project_root/macos-controller"
 quality_temp="$project_root/.temp/quality-gates"
 mkdir -p "$quality_temp"
 
+# 需要 JAVA_HOME 指向 JDK（CI 使用最新 LTS：JDK 25）。
 if [ -z "${JAVA_HOME:-}" ]; then
-    if [ -d "$project_root/.temp/jdk17/Contents/Home" ]; then
+    if [ -d "$project_root/.temp/jdk/Contents/Home" ]; then
+        JAVA_HOME="$project_root/.temp/jdk/Contents/Home"
+    elif [ -d "$project_root/.temp/jdk17/Contents/Home" ]; then
         JAVA_HOME="$project_root/.temp/jdk17/Contents/Home"
     else
-        echo "JAVA_HOME must point to JDK 17" >&2
+        echo "JAVA_HOME must point to a JDK (CI uses the latest LTS, JDK 25)" >&2
         exit 1
     fi
 fi
