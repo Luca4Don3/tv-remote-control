@@ -213,11 +213,8 @@ final class WsDebugClient: @unchecked Sendable {
             // 无读超时时锁内读循环可永久阻塞（fire-and-forget 心跳也不能依赖无限读）
             var tv = timeval(tv_sec: 45, tv_usec: 0)
             _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-            let connected = withUnsafePointer(to: info.pointee.ai_addr) { pointer -> Bool in
-                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { address in
-                    connect(fd, address, info.pointee.ai_addrlen) == 0
-                }
-            }
+            // ai_addr 已是 sockaddr 指针；不能取其地址再重解释（会传入指向指针的指针）。
+            let connected = connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0
             if connected { return fd }
             Self.closeSocketFd(fd)
             fd = -1
