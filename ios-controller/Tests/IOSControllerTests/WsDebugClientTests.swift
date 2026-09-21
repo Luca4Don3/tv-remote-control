@@ -48,6 +48,8 @@ final class WsDebugClientTests: XCTestCase {
         var fds: [Int32] = [-1, -1]
         XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds), 0)
         defer { _ = close(fds[0]); _ = close(fds[1]) }
+        // 有限读超时：任何意外 recv 都会快速失败而非永久阻塞。
+        setTimeout(fd: fds[0], seconds: 2)
 
         var ws = WsCodec.withRole(role: .client)
         let ack = "{\"protocolVersion\":1,\"requestId\":\"ws-hello-1\",\"sessionId\":\"ab\","
@@ -81,14 +83,23 @@ final class WsDebugClientTests: XCTestCase {
         defer { agent.stop() }
         agent.start(controllerId: controllerId)
 
-        let client = try WsDebugClient(host: "127.0.0.1", controllerId: controllerId, psk: psk, port: agent.port)
+        let client = try runBounded("connect", timeout: 5) {
+            try WsDebugClient(host: "127.0.0.1", controllerId: controllerId, psk: psk, port: agent.port)
+        }
         defer { client.close() }
 
         XCTAssertTrue(agent.waitForHandshake(timeout: 5), "handshake must complete")
-        // 服务端在 ACK 同批里发过加密控制帧；命令读循环必须消费它并最终拿到 ACK。
-        XCTAssertTrue(try client.sendKeyEvent(key: "DPAD_UP", state: "UP"))
+        // 服务端在 ACK 同批里发过加密 ping 与帧级 ping；命令读循环必须消费它们、
+        // 对帧级 ping 回 Pong，并最终拿到命令 ACK。
+        let ack = try runBounded("key_event", timeout: 5) {
+            try client.sendKeyEvent(key: "DPAD_UP", state: "UP")
+        }
+        try assertCommandSuccess(ack)
         XCTAssertTrue(agent.waitForSequences(count: 1, timeout: 5))
         XCTAssertEqual(agent.receivedTypes, ["key_event"])
+        XCTAssertTrue(agent.waitForPong(timeout: 5), "frame-level ping must be answered with a pong")
+        XCTAssertEqual(agent.receivedPong, Data("hb-ping".utf8))
+        XCTAssertNil(agent.serveError)
     }
 
     // MARK: - 场景 4：命令 → 心跳 → 命令，解密后序号 [1,2,3]，心跳不等 ACK
@@ -102,16 +113,27 @@ final class WsDebugClientTests: XCTestCase {
         defer { agent.stop() }
         agent.start(controllerId: controllerId)
 
-        let client = try WsDebugClient(host: "127.0.0.1", controllerId: controllerId, psk: psk, port: agent.port)
+        let client = try runBounded("connect", timeout: 5) {
+            try WsDebugClient(host: "127.0.0.1", controllerId: controllerId, psk: psk, port: agent.port)
+        }
         defer { client.close() }
 
-        XCTAssertTrue(try client.sendKeyEvent(key: "A", state: "DOWN"))
-        try client.sendHeartbeat() // fire-and-forget：只写不等 ACK
-        XCTAssertTrue(try client.sendKeyEvent(key: "A", state: "UP"))
+        let ackDown = try runBounded("key_event-down", timeout: 5) {
+            try client.sendKeyEvent(key: "A", state: "DOWN")
+        }
+        try assertCommandSuccess(ackDown)
+        try runBounded("heartbeat", timeout: 5) {
+            try client.sendHeartbeat() // fire-and-forget：只写不等 ACK
+        }
+        let ackUp = try runBounded("key_event-up", timeout: 5) {
+            try client.sendKeyEvent(key: "A", state: "UP")
+        }
+        try assertCommandSuccess(ackUp)
 
         XCTAssertTrue(agent.waitForSequences(count: 3, timeout: 5))
         XCTAssertEqual(agent.receivedSequences, [1, 2, 3])
         XCTAssertEqual(agent.receivedTypes, ["key_event", "ping", "key_event"])
+        XCTAssertNil(agent.serveError)
     }
 
     // MARK: - 场景 5：并发命令与心跳，按接收顺序序号严格递增、消息可解密
@@ -125,22 +147,29 @@ final class WsDebugClientTests: XCTestCase {
         defer { agent.stop() }
         agent.start(controllerId: controllerId)
 
-        let client = try WsDebugClient(host: "127.0.0.1", controllerId: controllerId, psk: psk, port: agent.port)
+        let client = try runBounded("connect", timeout: 5) {
+            try WsDebugClient(host: "127.0.0.1", controllerId: controllerId, psk: psk, port: agent.port)
+        }
         defer { client.close() }
 
         let errors = LockedErrors()
         let iterations = 8
-        DispatchQueue.concurrentPerform(iterations: iterations) { index in
-            do {
-                if index % 2 == 0 {
-                    try client.sendHeartbeat()
-                } else {
-                    _ = try client.sendKeyEvent(key: "DPAD_UP", state: "UP")
+        let finished = expectation(description: "concurrent command/heartbeat")
+        DispatchQueue.global().async {
+            DispatchQueue.concurrentPerform(iterations: iterations) { index in
+                do {
+                    if index % 2 == 0 {
+                        try client.sendHeartbeat()
+                    } else {
+                        _ = try client.sendKeyEvent(key: "DPAD_UP", state: "UP")
+                    }
+                } catch {
+                    errors.append("\(error)")
                 }
-            } catch {
-                errors.append("\(error)")
             }
+            finished.fulfill()
         }
+        wait(for: [finished], timeout: 10)
         XCTAssertTrue(errors.values.isEmpty, "concurrent sends must not fail: \(errors.values)")
         XCTAssertTrue(agent.waitForSequences(count: iterations, timeout: 10))
 
@@ -148,6 +177,7 @@ final class WsDebugClientTests: XCTestCase {
         XCTAssertEqual(sequences.count, iterations)
         XCTAssertEqual(Set(sequences).count, iterations, "sequences must be unique")
         XCTAssertEqual(sequences, sequences.sorted(), "sequences must arrive in increasing order")
+        XCTAssertNil(agent.serveError)
     }
 }
 
@@ -188,6 +218,52 @@ private final class LockedErrors: @unchecked Sendable {
     }
 }
 
+private enum TestFailure: Error {
+    case timeout(String)
+}
+
+/// 跨线程传递 `Result`（`@unchecked Sendable`，内部加锁）。
+private final class ResultBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Result<T, Error>?
+    func store(_ result: Result<T, Error>) {
+        lock.lock(); storage = result; lock.unlock()
+    }
+    var result: Result<T, Error> {
+        lock.lock(); defer { lock.unlock() }
+        return storage!
+    }
+}
+
+/// 在后台队列执行可能阻塞的客户端调用，并以有限时间等待；超时抛错而非挂起测试。
+private func runBounded<T>(_ description: String, timeout: TimeInterval, _ body: @escaping () throws -> T) throws -> T {
+    let semaphore = DispatchSemaphore(value: 0)
+    let box = ResultBox<T>()
+    DispatchQueue.global().async {
+        box.store(Result { try body() })
+        semaphore.signal()
+    }
+    guard semaphore.wait(timeout: .now() + timeout) == .success else {
+        throw TestFailure.timeout(description)
+    }
+    return try box.result.get()
+}
+
+/// 解析 command_ack 文本并断言 `payload.status == "SUCCESS"`（`sendKeyEvent` 返回 String）。
+private func assertCommandSuccess(_ ack: String, file: StaticString = #filePath, line: UInt = #line) throws {
+    let object = try XCTUnwrap(
+        JSONSerialization.jsonObject(with: Data(ack.utf8)) as? [String: Any],
+        file: file, line: line)
+    let payload = try XCTUnwrap(object["payload"] as? [String: Any], file: file, line: line)
+    XCTAssertEqual(payload["status"] as? String, "SUCCESS", file: file, line: line)
+}
+
+/// 给 fd 设置有限读超时，防止测试意外阻塞。
+private func setTimeout(fd: Int32, seconds: Int) {
+    var tv = timeval(tv_sec: seconds, tv_usec: 0)
+    _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+}
+
 /// 测试用最小 WS 回环服务端：HTTP 升级 → 明文 ws_hello → 加密命令循环。
 /// 仅使用 Rust 绑定原语，行为对齐 agent 的 `WsDebugChannel`（掩码入向、不掩码出向、
 /// counter 从 1 起、命令 ack、client ping 不回 ack）。
@@ -198,7 +274,11 @@ private final class LoopbackAgent {
     private let stateLock = NSLock()
 
     private var clientFD: Int32 = -1
+    private var stopped = false
     private var handshakeCompleted = false
+    private var pongReceived = false
+    private var receivedPongStorage: Data?
+    private var serveErrorStorage: String?
     private var receivedSequencesStorage: [UInt64] = []
     private var receivedTypesStorage: [String] = []
 
@@ -245,6 +325,16 @@ private final class LoopbackAgent {
         return receivedTypesStorage
     }
 
+    var receivedPong: Data? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return receivedPongStorage
+    }
+
+    var serveError: String? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return serveErrorStorage
+    }
+
     func start(controllerId: String) {
         queue.async { [weak self] in
             guard let self = self else { return }
@@ -257,6 +347,7 @@ private final class LoopbackAgent {
 
     func stop() {
         stateLock.lock()
+        stopped = true
         let fd = clientFD
         stateLock.unlock()
         if fd >= 0 { _ = close(fd) }
@@ -269,6 +360,10 @@ private final class LoopbackAgent {
 
     func waitForSequences(count: Int, timeout: TimeInterval) -> Bool {
         waitUntil(timeout: timeout) { self.receivedSequencesStorage.count >= count }
+    }
+
+    func waitForPong(timeout: TimeInterval) -> Bool {
+        waitUntil(timeout: timeout) { self.pongReceived }
     }
 
     private func waitUntil(timeout: TimeInterval, _ predicate: () -> Bool) -> Bool {
@@ -305,7 +400,8 @@ private final class LoopbackAgent {
                 psk: psk, clientRandom: clientRandom, serverRandom: serverRandom,
                 isClient: false, replayWindowBits: 64)
 
-            // 握手 ACK 与一个加密控制帧（server ping）同批发送，验证客户端同批缓存。
+            // 握手 ACK 同批再发：加密 ping（服务端探活）+ 帧级 Ping（opcode 9）。
+            // 帧级 Ping 必须被客户端回 Pong，从而可观测同批余帧确实被消费、未丢失。
             let ack = "{\"protocolVersion\":1,\"requestId\":\"ws-hello-1\",\"sessionId\":\"\(controllerId)\","
                 + "\"sequence\":2,\"type\":\"ws_hello_ack\",\"payload\":{\"serverRandom\":\"\(hexString(serverRandom))\","
                 + "\"authenticated\":true}}"
@@ -313,9 +409,11 @@ private final class LoopbackAgent {
             let serverPing = "{\"protocolVersion\":1,\"requestId\":\"ws-ping-1\",\"sessionId\":\"\(controllerId)\","
                 + "\"sequence\":1,\"type\":\"ping\",\"payload\":{}}"
             let sealedPing = try crypto.seal(isClient: false, plaintext: Data(serverPing.utf8), aad: Data())
-            let pingFrame = try codec.encode(opcode: 2, payload: sealedPing)
+            let encryptedPingFrame = try codec.encode(opcode: 2, payload: sealedPing)
+            let framePing = try codec.encode(opcode: 9, payload: Data("hb-ping".utf8))
             var batch = ackFrame
-            batch.append(pingFrame)
+            batch.append(encryptedPingFrame)
+            batch.append(framePing)
             try sendAll(fd: fd, batch)
 
             stateLock.lock(); handshakeCompleted = true; stateLock.unlock()
@@ -324,6 +422,13 @@ private final class LoopbackAgent {
                 let frame = try nextFrame(fd: fd, codec: &codec, pending: &pending)
                 if frame.opcode == 9 {
                     try sendAll(fd: fd, try codec.encode(opcode: 10, payload: frame.payload))
+                    continue
+                }
+                if frame.opcode == 10 {
+                    stateLock.lock()
+                    receivedPongStorage = frame.payload
+                    pongReceived = true
+                    stateLock.unlock()
                     continue
                 }
                 if frame.opcode == 8 { break }
@@ -353,8 +458,14 @@ private final class LoopbackAgent {
                 let sealed = try crypto.seal(isClient: false, plaintext: Data(ack.utf8), aad: Data())
                 try sendAll(fd: fd, try codec.encode(opcode: 2, payload: sealed))
             }
+        } catch LoopbackError.connectionClosed {
+            // 正常关闭（客户端/测试侧 close）：不视为失败。
         } catch {
-            // 连接结束/被 stop() 关闭：由测试侧清理，不视为失败。
+            stateLock.lock()
+            if !stopped { serveErrorStorage = "\(error)" }
+            stateLock.unlock()
+            // 异常退出：解除对端阻塞，避免客户端读循环长时间挂起。
+            _ = shutdown(fd, SHUT_RDWR)
         }
     }
 
@@ -363,7 +474,7 @@ private final class LoopbackAgent {
         var byte = [UInt8](repeating: 0, count: 1)
         while !(request.count >= 4 && Array(request.suffix(4)) == [13, 10, 13, 10]) {
             let n = recv(fd, &byte, 1, 0)
-            guard n > 0 else { throw LoopbackError.protocolViolation }
+            guard n > 0 else { throw LoopbackError.connectionClosed }
             request.append(byte[0])
         }
         let text = String(decoding: request, as: UTF8.self)
